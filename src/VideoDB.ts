@@ -118,227 +118,6 @@ export class VideoDB {
     }
 
     /**
-     * Retrieves the metadata object for a specified store.
-     * @param {string} storeName - The name of the store.
-     * @returns {StoreMetadata} The metadata object for the specified store.
-     * @throws {Error} If the specified store does not exist.
-     */
-    private getStoreMetadata(storeName: string): StoreMetadata {
-        const meta = this.storeMetadataMap.get(storeName);
-        if (!meta) {
-            throw new Error(`Object store "${storeName}" does not exist.`);
-        }
-        return meta;
-    }
-
-    /**
-     * Allocates space for a new row in the store's GPU buffer, creating a new chunk if needed.
-     * @param {StoreMetadata} storeMeta - The metadata of the store to allocate space in.
-     * @param {number} size - The size in bytes required for the new row.
-     * @returns {{ bufferMeta: BufferMetadata; chunkOffset: number }}
-     *          An object containing the buffer metadata and the offset at which the new row is allocated.
-     */
-    private allocateSpaceForNewRow(storeMeta: StoreMetadata, size: number): {
-        bufferMeta: BufferMetadata;
-        chunkOffset: number;
-    } {
-        // If there's no chunk, or the last chunk is too full, create a new one
-        let bufferMeta = storeMeta.buffers[storeMeta.buffers.length - 1];
-        if (!bufferMeta || !bufferMeta.gpuBuffer) {
-            // Create the first chunk
-            bufferMeta = this.createNewChunk(storeMeta);
-        }
-
-        // Suppose we track an extra field on BufferMetadata to track usedBytes
-        const usedBytes = (bufferMeta as any)._usedBytes || 0;
-        if (usedBytes + size > storeMeta.bufferSize) {
-            // Need a new chunk
-            bufferMeta = this.createNewChunk(storeMeta);
-            (bufferMeta as any)._usedBytes = 0;
-        }
-
-        // Now we allocate from bufferMeta
-        const chunkOffset = (bufferMeta as any)._usedBytes || 0;
-        (bufferMeta as any)._usedBytes = chunkOffset + size;
-        bufferMeta.rowCount += 1;
-
-        return { bufferMeta, chunkOffset };
-    }
-
-    /**
-     * Creates and returns a new GPU buffer chunk for the specified store metadata.
-     * @param {StoreMetadata} storeMeta - The metadata of the store that needs a new chunk.
-     * @returns {BufferMetadata} The metadata for the newly created GPU buffer chunk.
-     */
-    private createNewChunk(storeMeta: StoreMetadata): BufferMetadata {
-        const gpuBuffer = this.device.createBuffer({
-            size: storeMeta.bufferSize,
-            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: false
-        });
-        const bufferIndex = storeMeta.buffers.length;
-
-        const newBufferMeta: BufferMetadata = {
-            bufferIndex,
-            startRow: -1, // We can set this once we know the row ID
-            rowCount: 0,
-            gpuBuffer
-        };
-        storeMeta.buffers.push(newBufferMeta);
-        console.log(`Allocated a new 250MB chunk for store (bufferIndex=${bufferIndex}).`);
-        return newBufferMeta;
-    }
-
-    /**
-     * Converts a given value into an ArrayBuffer based on the store's data type.
-     * @param storeMeta - Metadata defining the store's data type (JSON, TypedArray, ArrayBuffer).
-     * @param value - The data to be serialized.
-     * @returns An ArrayBuffer containing the serialized data.
-     */
-    private serializeValueForStore(storeMeta: StoreMetadata, value: any): ArrayBuffer {
-        switch (storeMeta.dataType) {
-            case "JSON": {
-                let jsonString = JSON.stringify(value);
-                jsonString = padJsonTo4Bytes(jsonString);
-                return new TextEncoder().encode(jsonString).buffer;
-            }
-            case "TypedArray": {
-                if (!storeMeta.typedArrayType) {
-                    throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
-                }
-                const TypedArrayCtor = (globalThis as any)[storeMeta.typedArrayType];
-                if (!(value instanceof TypedArrayCtor)) {
-                    throw new Error(
-                        `Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`
-                    );
-                }
-                return value.buffer;
-            }
-            case "ArrayBuffer": {
-                if (!(value instanceof ArrayBuffer)) {
-                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
-                }
-                return value;
-            }
-            default:
-                throw new Error(`Unknown dataType "${storeMeta.dataType}" in store "${storeMeta}".`);
-        }
-    }
-
-    /**
-     * Locates or creates a row metadata entry and writes the data if necessary.
-     * @param storeMeta - The metadata of the target store.
-     * @param keyMap - A map of key-to-rowId for the store.
-     * @param key - The key identifying the row.
-     * @param arrayBuffer - The serialized data to be written.
-     * @returns A promise that resolves to the relevant RowMetadata (new or existing).
-     */
-    private async findOrCreateRowMetadata(
-        storeMeta: StoreMetadata,
-        keyMap: Map<string, number>,
-        key: string,
-        arrayBuffer: ArrayBuffer
-    ): Promise<RowMetadata> {
-        let rowId = keyMap.get(key);
-        let rowMetadata = rowId == null
-            ? null
-            : storeMeta.rows.find((r) => r.rowId === rowId) || null;
-
-        const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
-
-        if (!rowMetadata) {
-            // Create a new row
-            rowId = storeMeta.rows.length + 1;
-            rowMetadata = {
-                rowId,
-                bufferIndex,
-                offset,
-                length: arrayBuffer.byteLength
-            };
-            storeMeta.rows.push(rowMetadata);
-            keyMap.set(key, rowId);
-
-            // Initial write of data
-            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
-        } else {
-            // Handle overwrite or move to new allocation
-            rowMetadata = await this.updateRowOnOverwrite(storeMeta, rowMetadata, arrayBuffer, keyMap, key);
-        }
-
-        return rowMetadata;
-    }
-
-    /**
-     * Updates or reassigns a row when new data is larger or smaller than the existing row's capacity.
-     * @param storeMeta - The metadata of the target store.
-     * @param oldRowMeta - The existing row metadata being updated.
-     * @param arrayBuffer - The new data to be written.
-     * @param keyMap - A map of key-to-rowId for the store.
-     * @param key - The key identifying the row.
-     * @returns A promise that resolves to the updated or newly created RowMetadata.
-     */
-    private async updateRowOnOverwrite(
-        storeMeta: StoreMetadata,
-        oldRowMeta: RowMetadata,
-        arrayBuffer: ArrayBuffer,
-        keyMap: Map<string, number>,
-        key: string
-    ): Promise<RowMetadata> {
-        if (arrayBuffer.byteLength <= oldRowMeta.length) {
-            // Overwrite in place
-            const oldBuf = this.getBufferByIndex(storeMeta, oldRowMeta.bufferIndex);
-            await this.writeDataToBuffer(oldBuf, oldRowMeta.offset, arrayBuffer);
-
-            // Adjust length if new data is smaller
-            if (arrayBuffer.byteLength < oldRowMeta.length) {
-                oldRowMeta.length = arrayBuffer.byteLength;
-            }
-            return oldRowMeta;
-        } else {
-            // Mark old row inactive
-            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
-
-            // Create new allocation
-            const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
-
-            const newRowId = storeMeta.rows.length + 1;
-            const newRowMeta: RowMetadata = {
-                rowId: newRowId,
-                bufferIndex,
-                offset,
-                length: arrayBuffer.byteLength
-            };
-            storeMeta.rows.push(newRowMeta);
-            keyMap.set(key, newRowId);
-
-            // Write data to new allocation
-            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
-
-            return newRowMeta;
-        }
-    }
-
-    /**
-     * Completes a write operation by writing data again for alignment and updating row metadata.
-     * @param storeMeta - The metadata of the target store.
-     * @param rowMetadata - The row metadata associated with the current write.
-     * @param arrayBuffer - The serialized data to be written.
-     * @param gpuBuffer - The target GPU buffer to be written to.
-     * @returns A promise that resolves once the aligned write is completed and metadata is updated.
-     */
-    private async finalizeWrite(
-        storeMeta: StoreMetadata,
-        rowMetadata: RowMetadata,
-        arrayBuffer: ArrayBuffer,
-        gpuBuffer: GPUBuffer
-    ): Promise<void> {
-        const alignedLength = await this.writeDataToBuffer(gpuBuffer, rowMetadata.offset, arrayBuffer);
-        rowMetadata.length = alignedLength;
-        storeMeta.dirtyMetadata = true;
-        storeMeta.metadataVersion += 1;
-    }
-
-    /**
      * Stores or updates data in a GPU-backed store.
      * @param storeName - The name of the object store.
      * @param key - The unique key identifying the row.
@@ -397,6 +176,20 @@ export class VideoDB {
     }
 
     /**
+     * Retrieves the metadata object for a specified store.
+     * @param {string} storeName - The name of the store.
+     * @returns {StoreMetadata} The metadata object for the specified store.
+     * @throws {Error} If the specified store does not exist.
+     */
+    private getStoreMetadata(storeName: string): StoreMetadata {
+        const meta = this.storeMetadataMap.get(storeName);
+        if (!meta) {
+            throw new Error(`Object store "${storeName}" does not exist.`);
+        }
+        return meta;
+    }
+
+    /**
      * Looks up the correct RowMetadata for a given key from the store’s key map.
      *
      * @param {StoreMetadata} storeMeta - The metadata of the target store.
@@ -420,98 +213,6 @@ export class VideoDB {
         }
 
         return rowMetadata;
-    }
-
-    /**
-     * Copies data from the store’s GPU buffer chunk into a CPU-visible buffer
-     * and returns the contents as a Uint8Array.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store.
-     * @param {RowMetadata} rowMetadata - The row metadata specifying which buffer/offset to read.
-     * @returns {Promise<Uint8Array>} A promise resolving to a Uint8Array containing the copied data.
-     */
-    private async readDataFromGPU(
-        storeMeta: StoreMetadata,
-        rowMetadata: RowMetadata
-    ): Promise<Uint8Array> {
-        const chunkBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
-
-        // 1. Create a read buffer for GPU → CPU transfer
-        const readBuffer = this.device.createBuffer({
-            size: rowMetadata.length,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-        });
-
-        // 2. Copy data from the chunk buffer into readBuffer
-        const commandEncoder = this.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            chunkBuffer,          // Source buffer
-            rowMetadata.offset,
-            readBuffer,           // Destination buffer
-            0,
-            rowMetadata.length
-        );
-        this.device.queue.submit([commandEncoder.finish()]);
-
-        // 3. Map the read buffer to access the data
-        await readBuffer.mapAsync(GPUMapMode.READ);
-        const mappedRange = readBuffer.getMappedRange(0, rowMetadata.length);
-
-        // 4. Copy out the data before unmapping
-        const copiedData = new Uint8Array(mappedRange.slice(0));
-        readBuffer.unmap();
-
-        return copiedData;
-    }
-
-    /**
-     * Converts the raw bytes in a Uint8Array back into the appropriate data type based on store metadata.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store, including `dataType` and `typedArrayType`.
-     * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
-     * @returns {any} The deserialized data, which may be a JSON object, a typed array, or an ArrayBuffer.
-     */
-    private deserializeData(storeMeta: StoreMetadata, copiedData: Uint8Array): any {
-        switch (storeMeta.dataType) {
-            case "JSON": {
-                const jsonString = new TextDecoder().decode(copiedData);
-                return JSON.parse(jsonString);
-            }
-            case "TypedArray": {
-                if (!storeMeta.typedArrayType) {
-                    throw new Error(
-                        `typedArrayType is missing for store with dataType "TypedArray".`
-                    );
-                }
-                const TypedArrayCtor = (globalThis as any)[storeMeta.typedArrayType];
-                if (typeof TypedArrayCtor !== "function") {
-                    throw new Error(
-                        `Invalid typedArrayType "${storeMeta.typedArrayType}".`
-                    );
-                }
-                return new TypedArrayCtor(copiedData.buffer);
-            }
-            case "ArrayBuffer": {
-                return copiedData.buffer;
-            }
-            default:
-                throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
-        }
-    }
-
-    /**
-     * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
-     * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
-     * @param {number} bufferIndex - The index of the buffer to retrieve.
-     * @returns {GPUBuffer} The GPU buffer at the specified index.
-     * @throws {Error} If the buffer is not found or is uninitialized.
-     */
-    private getBufferByIndex(storeMeta: StoreMetadata, bufferIndex: number): GPUBuffer {
-        const bufMeta = storeMeta.buffers[bufferIndex];
-        if (!bufMeta || !bufMeta.gpuBuffer) {
-            throw new Error(`Buffer index ${bufferIndex} not found or uninitialized.`);
-        }
-        return bufMeta.gpuBuffer;
     }
 
     /**
@@ -545,6 +246,20 @@ export class VideoDB {
 
         // Not enough space, so allocate a new buffer
         return this.allocateNewBufferChunk(storeMeta, size);
+    }
+
+    /**
+     * Creates a new GPU buffer for the given store metadata with the specified size.
+     * @param {StoreMetadata} storeMeta - The metadata of the store that requires a new GPU buffer.
+     * @param {number} size - The size of the new GPU buffer in bytes.
+     * @returns {GPUBuffer} The newly created GPU buffer.
+     */
+    private createNewBuffer(storeMeta: StoreMetadata, size: number): GPUBuffer {
+        return this.device.createBuffer({
+            size,
+            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: false
+        });
     }
 
     /**
@@ -675,17 +390,302 @@ export class VideoDB {
     }
 
     /**
-     * Creates a new GPU buffer for the given store metadata with the specified size.
-     * @param {StoreMetadata} storeMeta - The metadata of the store that requires a new GPU buffer.
-     * @param {number} size - The size of the new GPU buffer in bytes.
-     * @returns {GPUBuffer} The newly created GPU buffer.
+     * Creates and returns a new GPU buffer chunk for the specified store metadata.
+     * @param {StoreMetadata} storeMeta - The metadata of the store that needs a new chunk.
+     * @returns {BufferMetadata} The metadata for the newly created GPU buffer chunk.
      */
-    private createNewBuffer(storeMeta: StoreMetadata, size: number): GPUBuffer {
-        return this.device.createBuffer({
-            size,
+    private createNewChunk(storeMeta: StoreMetadata): BufferMetadata {
+        const gpuBuffer = this.device.createBuffer({
+            size: storeMeta.bufferSize,
             usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
             mappedAtCreation: false
         });
+        const bufferIndex = storeMeta.buffers.length;
+
+        const newBufferMeta: BufferMetadata = {
+            bufferIndex,
+            startRow: -1, // We can set this once we know the row ID
+            rowCount: 0,
+            gpuBuffer
+        };
+        storeMeta.buffers.push(newBufferMeta);
+        console.log(`Allocated a new 250MB chunk for store (bufferIndex=${bufferIndex}).`);
+        return newBufferMeta;
+    }
+
+    /**
+     * Allocates space for a new row in the store's GPU buffer, creating a new chunk if needed.
+     * @param {StoreMetadata} storeMeta - The metadata of the store to allocate space in.
+     * @param {number} size - The size in bytes required for the new row.
+     * @returns {{ bufferMeta: BufferMetadata; chunkOffset: number }}
+     *          An object containing the buffer metadata and the offset at which the new row is allocated.
+     */
+    private allocateSpaceForNewRow(storeMeta: StoreMetadata, size: number): {
+        bufferMeta: BufferMetadata;
+        chunkOffset: number;
+    } {
+        // If there's no chunk, or the last chunk is too full, create a new one
+        let bufferMeta = storeMeta.buffers[storeMeta.buffers.length - 1];
+        if (!bufferMeta || !bufferMeta.gpuBuffer) {
+            // Create the first chunk
+            bufferMeta = this.createNewChunk(storeMeta);
+        }
+
+        // Suppose we track an extra field on BufferMetadata to track usedBytes
+        const usedBytes = (bufferMeta as any)._usedBytes || 0;
+        if (usedBytes + size > storeMeta.bufferSize) {
+            // Need a new chunk
+            bufferMeta = this.createNewChunk(storeMeta);
+            (bufferMeta as any)._usedBytes = 0;
+        }
+
+        // Now we allocate from bufferMeta
+        const chunkOffset = (bufferMeta as any)._usedBytes || 0;
+        (bufferMeta as any)._usedBytes = chunkOffset + size;
+        bufferMeta.rowCount += 1;
+
+        return { bufferMeta, chunkOffset };
+    }
+
+    /**
+     * Converts a given value into an ArrayBuffer based on the store's data type.
+     * @param storeMeta - Metadata defining the store's data type (JSON, TypedArray, ArrayBuffer).
+     * @param value - The data to be serialized.
+     * @returns An ArrayBuffer containing the serialized data.
+     */
+    private serializeValueForStore(storeMeta: StoreMetadata, value: any): ArrayBuffer {
+        switch (storeMeta.dataType) {
+            case "JSON": {
+                let jsonString = JSON.stringify(value);
+                jsonString = padJsonTo4Bytes(jsonString);
+                return new TextEncoder().encode(jsonString).buffer;
+            }
+            case "TypedArray": {
+                if (!storeMeta.typedArrayType) {
+                    throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
+                }
+                const TypedArrayCtor = (globalThis as any)[storeMeta.typedArrayType];
+                if (!(value instanceof TypedArrayCtor)) {
+                    throw new Error(
+                        `Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`
+                    );
+                }
+                return value.buffer;
+            }
+            case "ArrayBuffer": {
+                if (!(value instanceof ArrayBuffer)) {
+                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
+                }
+                return value;
+            }
+            default:
+                throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
+        }
+    }
+
+    /**
+     * Finds or creates a row metadata entry and writes the data if necessary.
+     * @param storeMeta - The metadata of the target store.
+     * @param keyMap - A map of key-to-rowId for the store.
+     * @param key - The key identifying the row.
+     * @param arrayBuffer - The serialized data to be written.
+     * @returns A promise that resolves to the relevant RowMetadata (new or existing).
+     */
+    private async findOrCreateRowMetadata(
+        storeMeta: StoreMetadata,
+        keyMap: Map<string, number>,
+        key: string,
+        arrayBuffer: ArrayBuffer
+    ): Promise<RowMetadata> {
+        let rowId = keyMap.get(key);
+        let rowMetadata = rowId == null
+            ? null
+            : storeMeta.rows.find((r) => r.rowId === rowId) || null;
+
+        const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
+
+        if (!rowMetadata) {
+            // Create a new row
+            rowId = storeMeta.rows.length + 1;
+            rowMetadata = {
+                rowId,
+                bufferIndex,
+                offset,
+                length: arrayBuffer.byteLength
+            };
+            storeMeta.rows.push(rowMetadata);
+            keyMap.set(key, rowId);
+
+            // Initial write of data
+            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
+        } else {
+            // Handle overwrite or move to new allocation
+            rowMetadata = await this.updateRowOnOverwrite(storeMeta, rowMetadata, arrayBuffer, keyMap, key);
+        }
+
+        return rowMetadata;
+    }
+
+    /**
+     * Updates or reassigns a row when new data is larger or smaller than the existing row's capacity.
+     * @param storeMeta - The metadata of the target store.
+     * @param oldRowMeta - The existing row metadata being updated.
+     * @param arrayBuffer - The new data to be written.
+     * @param keyMap - A map of key-to-rowId for the store.
+     * @param key - The key identifying the row.
+     * @returns A promise that resolves to the updated or newly created RowMetadata.
+     */
+    private async updateRowOnOverwrite(
+        storeMeta: StoreMetadata,
+        oldRowMeta: RowMetadata,
+        arrayBuffer: ArrayBuffer,
+        keyMap: Map<string, number>,
+        key: string
+    ): Promise<RowMetadata> {
+        if (arrayBuffer.byteLength <= oldRowMeta.length) {
+            // Overwrite in place
+            const oldBuf = this.getBufferByIndex(storeMeta, oldRowMeta.bufferIndex);
+            await this.writeDataToBuffer(oldBuf, oldRowMeta.offset, arrayBuffer);
+
+            // Adjust length if new data is smaller
+            if (arrayBuffer.byteLength < oldRowMeta.length) {
+                oldRowMeta.length = arrayBuffer.byteLength;
+            }
+            return oldRowMeta;
+        } else {
+            // Mark old row inactive
+            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
+
+            // Create new allocation
+            const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
+
+            const newRowId = storeMeta.rows.length + 1;
+            const newRowMeta: RowMetadata = {
+                rowId: newRowId,
+                bufferIndex,
+                offset,
+                length: arrayBuffer.byteLength
+            };
+            storeMeta.rows.push(newRowMeta);
+            keyMap.set(key, newRowId);
+
+            // Write data to new allocation
+            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
+
+            return newRowMeta;
+        }
+    }
+
+    /**
+     * Completes a write operation by writing data again for alignment and updating row metadata.
+     * @param storeMeta - The metadata of the target store.
+     * @param rowMetadata - The row metadata associated with the current write.
+     * @param arrayBuffer - The serialized data to be written.
+     * @param gpuBuffer - The target GPU buffer to be written to.
+     * @returns A promise that resolves once the aligned write is completed and metadata is updated.
+     */
+    private async finalizeWrite(
+        storeMeta: StoreMetadata,
+        rowMetadata: RowMetadata,
+        arrayBuffer: ArrayBuffer,
+        gpuBuffer: GPUBuffer
+    ): Promise<void> {
+        const alignedLength = await this.writeDataToBuffer(gpuBuffer, rowMetadata.offset, arrayBuffer);
+        rowMetadata.length = alignedLength;
+        storeMeta.dirtyMetadata = true;
+        storeMeta.metadataVersion += 1;
+    }
+
+    /**
+     * Copies data from the store’s GPU buffer chunk into a CPU-visible buffer
+     * and returns the contents as a Uint8Array.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the target store.
+     * @param {RowMetadata} rowMetadata - The row metadata specifying which buffer/offset to read.
+     * @returns {Promise<Uint8Array>} A promise resolving to a Uint8Array containing the copied data.
+     */
+    private async readDataFromGPU(
+        storeMeta: StoreMetadata,
+        rowMetadata: RowMetadata
+    ): Promise<Uint8Array> {
+        const chunkBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
+
+        // 1. Create a read buffer for GPU → CPU transfer
+        const readBuffer = this.device.createBuffer({
+            size: rowMetadata.length,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
+
+        // 2. Copy data from the chunk buffer into readBuffer
+        const commandEncoder = this.device.createCommandEncoder();
+        commandEncoder.copyBufferToBuffer(
+            chunkBuffer,          // Source buffer
+            rowMetadata.offset,
+            readBuffer,           // Destination buffer
+            0,
+            rowMetadata.length
+        );
+        this.device.queue.submit([commandEncoder.finish()]);
+
+        // 3. Map the read buffer to access the data
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const mappedRange = readBuffer.getMappedRange(0, rowMetadata.length);
+
+        // 4. Copy out the data before unmapping
+        const copiedData = new Uint8Array(mappedRange.slice(0));
+        readBuffer.unmap();
+
+        return copiedData;
+    }
+
+    /**
+     * Converts the raw bytes in a Uint8Array back into the appropriate data type based on store metadata.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the target store, including `dataType` and `typedArrayType`.
+     * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
+     * @returns {any} The deserialized data, which may be a JSON object, a typed array, or an ArrayBuffer.
+     */
+    private deserializeData(storeMeta: StoreMetadata, copiedData: Uint8Array): any {
+        switch (storeMeta.dataType) {
+            case "JSON": {
+                const jsonString = new TextDecoder().decode(copiedData);
+                return JSON.parse(jsonString);
+            }
+            case "TypedArray": {
+                if (!storeMeta.typedArrayType) {
+                    throw new Error(
+                        `typedArrayType is missing for store with dataType "TypedArray".`
+                    );
+                }
+                const TypedArrayCtor = (globalThis as any)[storeMeta.typedArrayType];
+                if (typeof TypedArrayCtor !== "function") {
+                    throw new Error(
+                        `Invalid typedArrayType "${storeMeta.typedArrayType}".`
+                    );
+                }
+                return new TypedArrayCtor(copiedData.buffer);
+            }
+            case "ArrayBuffer": {
+                return copiedData.buffer;
+            }
+            default:
+                throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
+        }
+    }
+
+    /**
+     * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
+     * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
+     * @param {number} bufferIndex - The index of the buffer to retrieve.
+     * @returns {GPUBuffer} The GPU buffer at the specified index.
+     * @throws {Error} If the buffer is not found or is uninitialized.
+     */
+    private getBufferByIndex(storeMeta: StoreMetadata, bufferIndex: number): GPUBuffer {
+        const bufMeta = storeMeta.buffers[bufferIndex];
+        if (!bufMeta || !bufMeta.gpuBuffer) {
+            throw new Error(`Buffer index ${bufferIndex} not found or uninitialized.`);
+        }
+        return bufMeta.gpuBuffer;
     }
 
     /**
