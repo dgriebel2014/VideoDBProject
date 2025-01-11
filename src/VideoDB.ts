@@ -414,40 +414,6 @@ export class VideoDB {
     }
 
     /**
-     * Allocates space for a new row in the store's GPU buffer, creating a new chunk if needed.
-     * @param {StoreMetadata} storeMeta - The metadata of the store to allocate space in.
-     * @param {number} size - The size in bytes required for the new row.
-     * @returns {{ bufferMeta: BufferMetadata; chunkOffset: number }}
-     *          An object containing the buffer metadata and the offset at which the new row is allocated.
-     */
-    private allocateSpaceForNewRow(storeMeta: StoreMetadata, size: number): {
-        bufferMeta: BufferMetadata;
-        chunkOffset: number;
-    } {
-        // If there's no chunk, or the last chunk is too full, create a new one
-        let bufferMeta = storeMeta.buffers[storeMeta.buffers.length - 1];
-        if (!bufferMeta || !bufferMeta.gpuBuffer) {
-            // Create the first chunk
-            bufferMeta = this.createNewChunk(storeMeta);
-        }
-
-        // Suppose we track an extra field on BufferMetadata to track usedBytes
-        const usedBytes = (bufferMeta as any)._usedBytes || 0;
-        if (usedBytes + size > storeMeta.bufferSize) {
-            // Need a new chunk
-            bufferMeta = this.createNewChunk(storeMeta);
-            (bufferMeta as any)._usedBytes = 0;
-        }
-
-        // Now we allocate from bufferMeta
-        const chunkOffset = (bufferMeta as any)._usedBytes || 0;
-        (bufferMeta as any)._usedBytes = chunkOffset + size;
-        bufferMeta.rowCount += 1;
-
-        return { bufferMeta, chunkOffset };
-    }
-
-    /**
      * Converts a given value into an ArrayBuffer based on the store's data type.
      * @param storeMeta - Metadata defining the store's data type (JSON, TypedArray, ArrayBuffer).
      * @param value - The data to be serialized.
