@@ -1,0 +1,324 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>VideoDB README</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            max-width: 800px;
+        }
+
+        h1, h2, h3, h4 {
+            color: #2c3e50;
+        }
+
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: Consolas, "Courier New", monospace;
+        }
+
+        pre {
+            background: #f9f9f9;
+            border: 1px solid #ccc;
+            padding: 10px;
+            overflow-x: auto;
+            border-radius: 4px;
+        }
+
+        hr {
+            border: none;
+            border-bottom: 1px solid #ccc;
+            margin: 30px 0;
+        }
+
+        ul {
+            margin-left: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Disclaimer Section -->
+    <p style="color: #e74c3c; font-weight: bold;">
+        <em>Disclaimer:</em> As of this writing, the VideoDB project is less than 72 hours old and
+        remains under active development. Expect rapid changes and frequent updates.
+    </p>
+
+    <h1>VideoDB</h1>
+    <p>
+        <code>VideoDB</code> is a powerful JavaScript class designed for managing object stores with
+        <strong>CPU-based metadata</strong> and <strong>GPU-backed data storage</strong>, optimized for
+        <strong>AI/ML workflows</strong>. It supports storing and retrieving key-value pairs, with data
+        formats such as <strong>TypedArrays</strong>, <strong>JSON</strong>, and raw <strong>ArrayBuffers</strong>.
+        Built on <strong>WebGPU</strong>, <code>VideoDB</code> enables high-performance data management,
+        especially for applications involving embeddings, vectors, and other computational datasets.
+    </p>
+
+    <hr />
+
+    <h2>Features</h2>
+    <ul>
+        <li><strong>Efficient GPU Storage</strong>: Data rows are stored in GPU buffers for fast access, while metadata is tracked on the CPU.</li>
+        <li><strong>Multi-Format Support</strong>: Manage data in TypedArray formats (<code>Float32Array</code>, <code>Float64Array</code>, <code>Int32Array</code>, etc.), JSON, or raw binary (<code>ArrayBuffer</code>).</li>
+        <li>
+            <strong>Dynamic Store Management</strong>:
+            <ul>
+                <li>Create, list, delete object stores.</li>
+                <li>Store, retrieve, and overwrite individual rows.</li>
+            </ul>
+        </li>
+        <li><strong>Optimized for AI/ML Workflows</strong>: Ideal for handling large datasets such as embeddings or tensors.</li>
+        <li><strong>Cross-Browser Compatibility</strong>: Works in environments supporting <strong>WebGPU</strong> (e.g., Chrome, Edge).</li>
+    </ul>
+
+    <hr />
+
+    <h2>Table of Contents</h2>
+    <ul>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#usage">Usage</a></li>
+        <li>
+            <a href="#api-reference">API Reference</a>
+            <ul>
+                <li><a href="#constructor">Constructor</a></li>
+                <li><a href="#methods">Methods</a></li>
+            </ul>
+        </li>
+        <li>
+            <a href="#example-code">Example Code</a>
+            <ul>
+                <li><a href="#working-with-json-stores">Working with JSON Stores</a></li>
+            </ul>
+        </li>
+        <li><a href="#contributing">Contributing</a></li>
+        <li><a href="#license">License</a></li>
+    </ul>
+
+    <hr />
+
+    <h2 id="installation">Installation</h2>
+
+    <h3>Prerequisites</h3>
+    <ol>
+        <li>
+            A browser or environment with <strong>WebGPU</strong> support:
+            <ul>
+                <li><a href="https://developer.chrome.com/en/docs/webgpu" target="_blank">Enable WebGPU in Chrome/Edge</a></li>
+            </ul>
+        </li>
+        <li>
+            Install <code>VideoDB</code> as part of your project:
+            <pre><code>npm install videodb
+</code></pre>
+        </li>
+    </ol>
+
+    <h3>Importing VideoDB</h3>
+    <p>If you�re using a module-based environment (e.g., ES6 or TypeScript):</p>
+<pre><code>import { VideoDB } from 'videodb';
+</code></pre>
+
+    <hr />
+
+    <h2 id="usage">Usage</h2>
+
+    <h3>Quick Start</h3>
+<pre><code>// 1. Obtain a WebGPU device
+const device = await navigator.gpu.requestAdapter()
+  .then(adapter => adapter.requestDevice());
+
+// 2. Instantiate VideoDB
+const videoDB = new VideoDB(device);
+
+// 3. Create an object store
+videoDB.createObjectStore("exampleStore", {
+    dataType: "TypedArray",
+    typedArrayType: "Float32Array",
+    bufferSize: 1024 * 1024, // 1MB
+    totalRows: 100
+});
+
+// 4. Add data
+const vector = new Float32Array([1.23, 4.56, 7.89]);
+await videoDB.put("exampleStore", "vector1", vector);
+
+// 5. Retrieve data
+const retrieved = await videoDB.get("exampleStore", "vector1");
+console.log("Retrieved vector:", retrieved);
+
+// 6. Delete the store
+videoDB.deleteObjectStore("exampleStore");
+</code></pre>
+
+    <hr />
+
+    <h2 id="api-reference">API Reference</h2>
+
+    <h3 id="constructor">Constructor</h3>
+
+    <h4><code>new VideoDB(device)</code></h4>
+    <ul>
+        <li>
+            <strong>Parameters</strong>:
+            <ul>
+                <li><code>device</code> (<code>GPUDevice</code>): The WebGPU device instance used to allocate GPU buffers.</li>
+            </ul>
+        </li>
+        <li>
+            <strong>Description</strong>:<br />
+            Initializes the <code>VideoDB</code> instance with CPU-based metadata tracking and GPU buffer management.
+        </li>
+    </ul>
+
+    <hr />
+
+    <h3 id="methods">Methods</h3>
+
+    <h4><code>createObjectStore(storeName, options)</code></h4>
+    <ul>
+        <li><strong>Description</strong>: Creates a new object store with specified metadata and GPU buffers.</li>
+        <li>
+            <strong>Parameters</strong>:
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the new store.</li>
+                <li>
+                    <code>options</code> (<code>object</code>): Store configuration options:
+                    <ul>
+                        <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): Specifies the data format.</li>
+                        <li><code>typedArrayType</code> (optional): Typed array constructor name (e.g., <code>"Float32Array"</code>).</li>
+                        <li><code>bufferSize</code> (<code>number</code>): Size of the GPU buffer in bytes.</li>
+                        <li><code>totalRows</code> (<code>number</code>): Hint for total row capacity.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>
+            <strong>Example</strong>:
+            <pre><code>videoDB.createObjectStore("floatStore", {
+    dataType: "TypedArray",
+    typedArrayType: "Float32Array",
+    bufferSize: 1024 * 1024,
+    totalRows: 50
+});
+</code></pre>
+        </li>
+    </ul>
+
+    <h4><code>put(storeName, key, value)</code></h4>
+    <ul>
+        <li><strong>Description</strong>: Inserts or updates a row in the specified object store.</li>
+        <li>
+            <strong>Parameters</strong>:
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+                <li><code>key</code> (<code>string</code>): Unique key identifying the row.</li>
+                <li><code>value</code> (<code>any</code>): Data to store. For TypedArrays, it must match the <code>typedArrayType</code>.</li>
+            </ul>
+        </li>
+        <li>
+            <strong>Example</strong>:
+            <pre><code>const vector = new Float32Array([1.1, 2.2, 3.3]);
+await videoDB.put("floatStore", "vectorKey", vector);
+</code></pre>
+        </li>
+    </ul>
+
+    <h4><code>get(storeName, key)</code></h4>
+    <ul>
+        <li><strong>Description</strong>: Retrieves a row's data by its key.</li>
+        <li>
+            <strong>Parameters</strong>:
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+                <li><code>key</code> (<code>string</code>): The key identifying the row.</li>
+            </ul>
+        </li>
+        <li><strong>Returns</strong>: A <code>Promise</code> resolving to the data or <code>null</code> if the key does not exist.</li>
+        <li>
+            <strong>Example</strong>:
+            <pre><code>const data = await videoDB.get("floatStore", "vectorKey");
+console.log(data);
+</code></pre>
+        </li>
+    </ul>
+
+    <h4><code>listObjectStores()</code></h4>
+    <ul>
+        <li><strong>Description</strong>: Lists all object store names.</li>
+        <li><strong>Returns</strong>: An array of store names.</li>
+        <li>
+            <strong>Example</strong>:
+            <pre><code>const stores = videoDB.listObjectStores();
+console.log(stores);
+</code></pre>
+        </li>
+    </ul>
+
+    <h4><code>deleteObjectStore(storeName)</code></h4>
+    <ul>
+        <li><strong>Description</strong>: Deletes the specified object store and frees its GPU buffers.</li>
+        <li>
+            <strong>Parameters</strong>:
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
+            </ul>
+        </li>
+        <li>
+            <strong>Example</strong>:
+            <pre><code>videoDB.deleteObjectStore("floatStore");
+</code></pre>
+        </li>
+    </ul>
+
+    <hr />
+
+    <h2 id="example-code">Example Code</h2>
+
+    <h3 id="working-with-json-stores">Working with JSON Stores</h3>
+<pre><code>// Create a JSON-based object store
+videoDB.createObjectStore("jsonStore", {
+    dataType: "JSON",
+    bufferSize: 1024 * 1024,
+    totalRows: 50
+});
+
+// Add a JSON object
+const user = { id: 123, name: "John Doe", preferences: { theme: "dark" } };
+await videoDB.put("jsonStore", "user:123", user);
+
+// Retrieve the JSON object
+const retrievedUser = await videoDB.get("jsonStore", "user:123");
+console.log("Retrieved JSON:", retrievedUser);
+
+// Delete the store
+videoDB.deleteObjectStore("jsonStore");
+</code></pre>
+
+    <hr />
+
+    <h2 id="contributing">Contributing</h2>
+    <p>
+        We welcome contributions to improve <code>VideoDB</code>. To contribute:
+    </p>
+    <ol>
+        <li>Fork the repository on GitHub.</li>
+        <li>Create a new branch for your feature or bugfix.</li>
+        <li>Submit a Pull Request (PR) with a clear description of your changes.</li>
+    </ol>
+
+    <hr />
+
+    <h2 id="license">License</h2>
+    <p>
+        <code>VideoDB</code> is released under the
+        <a href="https://opensource.org/licenses/MIT" target="_blank">MIT License</a>.<br />
+        Feel free to use, modify, and distribute this software under its terms.
+    </p>
+
+</body>
+</html>
