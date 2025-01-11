@@ -1,0 +1,1153 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>VideoDB New Demo</title>
+    <style>
+        /* Basic reset and font */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: sans-serif;
+            background-color: #f6f6f6;
+            color: #333;
+            padding: 16px;
+        }
+
+        /* Container for the three horizontal panels */
+        .container {
+            display: flex;
+            flex-direction: row;
+            gap: 16px;
+            height: 80vh; /* Adjust as needed */
+        }
+
+        /* Left panel (List of tasks) */
+        .panel-left {
+            flex: 0 0 25%;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 8px;
+            overflow-y: auto;
+        }
+
+            .panel-left h2 {
+                margin-bottom: 0.5em;
+                font-size: 1.2em;
+                color: #2c3e50;
+            }
+
+        .task-list {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+            .task-list li {
+                margin-bottom: 16px;
+            }
+
+            .task-list a {
+                color: #0066cc;
+                text-decoration: none;
+                font-weight: bold;
+                cursor: pointer;
+            }
+
+        .task-description {
+            display: block;
+            margin-top: 4px;
+            font-size: 0.85em;
+            color: #555;
+        }
+
+        /* Middle panel (Console) */
+        .panel-middle {
+            flex: 0 0 35%;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 8px;
+            overflow-y: auto;
+        }
+
+            .panel-middle h2 {
+                margin-bottom: 0.5em;
+                font-size: 1.2em;
+                color: #2c3e50;
+            }
+
+        .console-log {
+            background: #fafafa;
+            border: 1px solid #ddd;
+            min-height: 60vh;
+            padding: 8px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        /* Right panel (Code Snippets) */
+        .panel-right {
+            flex: 1;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 8px;
+            overflow-y: auto;
+        }
+
+            .panel-right h2 {
+                margin-bottom: 0.5em;
+                font-size: 1.2em;
+                color: #2c3e50;
+            }
+
+        .code-pane {
+            border: 1px solid #ddd;
+            background: #fefefe;
+            min-height: 60vh;
+            border-radius: 4px;
+            padding: 8px;
+            font-family: monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>VideoDB Demo Page</h1>
+    <p>
+        This page illustrates how <code>VideoDB</code> can perform various tasks.
+        Select a link in the first panel to view console logs (middle panel)
+        and the corresponding code snippets (right panel). Currently, this is
+        a design-only layout—no actual actions occur.
+    </p>
+
+    <div class="container">
+        <!-- Left Panel: List of tasks/links -->
+        <div class="panel-left">
+            <h2>VideoDB Tasks</h2>
+            <ul class="task-list">
+                <!-- Keep GPU check, remove single-step tasks, add multi-step tasks. -->
+                <li>
+                    <a href="#" data-task="checkGPU">Check GPU Availability</a>
+                    <span class="task-description">Quickly verify if WebGPU is supported in the user’s browser.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageJsonStore">Create and Manage a JSON Object Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageFloat32Store">Create and Manage a Float32Array Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageFloat64Store">Create and Manage a Float64Array Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageInt32Store">Create and Manage an Int32Array Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageUint32Store">Create and Manage a Uint32Array Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="manageUint8Store">Create and Manage a Uint8Array Store</a>
+                    <span class="task-description">All commands to create the store, put data, get data, delete data, then delete the store.</span>
+                </li>
+                <li>
+                    <a href="#" data-task="classDocs">Class Documentation</a>
+                    <span class="task-description">View the complete VideoDB class docs in the right pane.</span>
+                </li>
+                <!-- Add more multi-step tasks for other data/store types as needed. -->
+            </ul>
+        </div>
+
+        <!-- Middle Panel: Console Output -->
+        <div class="panel-middle">
+            <h2>Console View</h2>
+            <div class="console-log" id="consoleLog">
+                <!-- Textual messages from tasks appear here. -->
+            </div>
+        </div>
+
+        <!-- Right Panel: Code Snippets -->
+        <div class="panel-right">
+            <h2>Code Snippets</h2>
+            <div id="codePane">
+                <!-- Code or commands for the chosen task will appear here. -->
+                <p>No code to show. Select a task from the left panel.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Updated script block -->
+    <script type="module">
+        import { VideoDB } from './js/VideoDB.js';
+
+        /**
+         * Logs a message to the consoleLog div (middle panel).
+         * @param {string} msg - The message to display in the console area.
+         * @returns {void}
+         */
+        function logToConsole(msg) {
+            const consoleDiv = document.getElementById('consoleLog');
+            consoleDiv.textContent += msg + "\n";
+        }
+
+        /**
+         * Logs an HTML-based command to the codePane div (right panel), with formatting.
+         * @param {string} htmlCommand - The HTML content to display in the code area as a command.
+         * @returns {void}
+         */
+        function logCommandToConsole(htmlCommand) {
+            const codeDiv = document.getElementById('codePane');
+            // Append to existing content, preserving any existing code
+            codeDiv.innerHTML += `<div style="margin-left: 10px;"><strong>${htmlCommand}</strong></div>`;
+        }
+
+        /**
+         * Clears the console window (middle panel).
+         * @returns {void}
+         */
+        function clearConsole() {
+            const consoleDiv = document.getElementById('consoleLog');
+            consoleDiv.textContent = '';
+        }
+
+        /**
+         * Clears the code pane (right panel).
+         * @returns {void}
+         */
+        function clearCodePane() {
+            const codeDiv = document.getElementById('codePane');
+            codeDiv.innerHTML = '<p></p>';
+        }
+
+        // We'll keep a reference to our VideoDB instance and device
+        let videoDB = null;
+        let device = null;
+
+        /**
+         * Initializes the page by attaching event listeners for each task link.
+         * @returns {Promise<void>}
+         */
+        async function initDemoPage() {
+            // Attach event listeners for each link with a data-task attribute
+            const taskLinks = document.querySelectorAll('.task-list a[data-task]');
+            taskLinks.forEach(link => {
+                link.addEventListener('click', async (event) => {
+                    event.preventDefault();
+                    const task = link.getAttribute('data-task');
+
+                    // Clear both console and code pane before each new task
+                    clearConsole();
+                    clearCodePane();
+
+                    switch (task) {
+                        case 'checkGPU':
+                            await checkGPU();
+                            break;
+                        case 'manageJsonStore':
+                            await manageJsonStore();
+                            break;
+                        case 'manageFloat32Store':
+                            await manageFloat32Store();
+                            break;
+                        case 'manageFloat64Store':
+                            await manageFloat64Store();
+                            break;
+                        case 'manageInt32Store':
+                            await manageInt32Store();
+                            break;
+                        case 'manageUint32Store':
+                            await manageUint32Store();
+                            break;
+                        case 'manageUint8Store':
+                            await manageUint8Store();
+                            break;
+                        case 'classDocs':
+                            showClassDocs();
+                            break;
+
+                        default:
+                            logToConsole(`[ERROR] Unknown task: ${task}`);
+                            break;
+                    }
+                });
+            });
+
+            // Optional: Immediately try to request the GPU device
+            await setupDevice();
+        }
+
+        /**
+         * Sets up the GPU device and creates a VideoDB instance for use in demos.
+         * @returns {Promise<void>}
+         */
+        async function setupDevice() {
+            if (!('gpu' in navigator)) {
+                logToConsole("[INFO] WebGPU is not supported in this environment.");
+                logToConsole("If using Chrome or Edge, try enabling WebGPU in chrome://flags or edge://flags.");
+                return;
+            }
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                logToConsole("[ERROR] Failed to get GPU adapter.");
+                logToConsole("Check if experimental features are enabled (chrome://flags or edge://flags).");
+                return;
+            }
+            device = await adapter.requestDevice();
+            videoDB = new VideoDB(device);
+
+            // Just to confirm that we have the device
+            logToConsole("[INFO] Successfully created VideoDB instance.");
+        }
+
+        /**
+         * Quickly verify if WebGPU is supported in the user’s browser.
+         * @returns {Promise<void>}
+         */
+        async function checkGPU() {
+            logToConsole("[TASK] Checking GPU availability...");
+
+            // STEP 1: Attempt to create or confirm the GPU device
+            logToConsole("[Step 1] Attempting to request the GPU device...");
+            if (!device) {
+                await setupDevice();
+            }
+
+            // STEP 2: Success or fail message
+            if (device) {
+                logToConsole("[SUCCESS] GPU device is available. WebGPU is supported.");
+                logToConsole("If you had issues, ensure your Chrome/Edge flags are set to enable WebGPU.");
+            } else {
+                logToConsole("[FAIL] WebGPU not supported or device not available.");
+                logToConsole("Enable WebGPU via chrome://flags or edge://flags, then relaunch.");
+            }
+
+            // Show code snippet in the right pane
+            logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Attempt to request the GPU device</b><br />
+const adapter = await navigator.gpu.requestAdapter();<br />
+if (!adapter) {<br />
+&nbsp;&nbsp;&nbsp;&nbsp;logToConsole("[ERROR] Failed to get GPU adapter.");<br />
+&nbsp;&nbsp;&nbsp;&nbsp;return;<br />
+}<br /><br />
+
+<b style='color:green;'>// 2. Create the device and instantiate VideoDB</b><br />
+device = await adapter.requestDevice();<br />
+videoDB = new VideoDB(device);<br /><br />
+</code>
+    `);
+        }
+
+        /**
+         * Multi-step demo for creating and managing a JSON Object Store:
+         * create the store, put data, get data, delete data, then delete store.
+         * @returns {Promise<void>}
+         */
+        async function manageJsonStore() {
+            logToConsole("[TASK] Managing a JSON Object Store...");
+            // Ensure we have a device/videoDB
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create a JSON store
+                logToConsole("[Step 1] Creating JSON store 'jsonStore'...");
+                videoDB.createObjectStore("jsonStore", {
+                    dataType: "JSON",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'jsonStore'.");
+
+                logCommandToConsole(`
+        <code>
+        <b style='color:green;'>// 1. Create a JSON store</b><br />
+        videoDB.createObjectStore("jsonStore", {<br />
+            dataType: "JSON",<br />
+            bufferSize: 1024 * 1024,<br />
+            totalRows: 50<br />
+        });<br /><br />
+        </code>
+                    `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting JSON data into 'jsonStore'...");
+                const sampleData = { greeting: "Hello JSON Store!", time: Date.now() };
+                await videoDB.put("jsonStore", "myJsonKey", sampleData);
+                logToConsole("[SUCCESS] Data inserted under key 'myJsonKey'.");
+
+                logCommandToConsole(`
+        <code>
+        <b style='color:green;'>// 2. Put data</b><br />
+        const sampleData = { greeting: "Hello JSON Store!", time: Date.now() };<br />
+        await videoDB.put("jsonStore", "myJsonKey", sampleData);<br /><br />
+        </code>
+                    `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'jsonStore'...");
+                const retrievedData = await videoDB.get("jsonStore", "myJsonKey");
+                logToConsole("[SUCCESS] Retrieved data: " + JSON.stringify(retrievedData));
+
+                logCommandToConsole(`
+        <code>
+        <b style='color:green;'>// 3. Get data</b><br />
+        const retrievedData = await videoDB.get("jsonStore", "myJsonKey");<br />
+        console.log("Retrieved:", retrievedData);<br /><br />
+        </code>
+                    `);
+
+                // 4. Delete data (simulate by overwriting with an empty object)
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("jsonStore", "myJsonKey", {});
+                logToConsole("[SUCCESS] Overwrote 'myJsonKey' with empty object.");
+
+                logCommandToConsole(`
+        <code>
+        <b style='color:green;'>// 4. Delete data by overwriting</b><br />
+        await videoDB.put("jsonStore", "myJsonKey", {});<br /><br />
+        </code>
+                    `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'jsonStore'...");
+                videoDB.deleteObjectStore("jsonStore");
+                logToConsole("[SUCCESS] 'jsonStore' deleted.");
+
+                logCommandToConsole(`
+        <code>
+        <b style='color:green;'>// 5. Delete the store</b><br />
+        videoDB.deleteObjectStore("jsonStore");<br /><br />
+        </code>
+                    `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Multi-step demo for creating and managing a Float32Array Object Store:
+         * create the store, put data, get data, delete data, then delete store.
+         * @returns {Promise<void>}
+         */
+        async function manageFloat32Store() {
+            logToConsole("[TASK] Managing a Float32Array Object Store...");
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create a Float32 store
+                logToConsole("[Step 1] Creating Float32 store 'floatStore'...");
+                videoDB.createObjectStore("floatStore", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Float32Array",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'floatStore'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Create a Float32 store</b><br />
+videoDB.createObjectStore("floatStore", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Float32Array",<br />
+    bufferSize: 1024 * 1024,<br />
+    totalRows: 50<br />
+});<br /><br />
+</code>
+        `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting Float32 data into 'floatStore'...");
+                const floatArray = new Float32Array([1.11, 2.22, 3.33]);
+                await videoDB.put("floatStore", "myFloatKey", floatArray);
+                logToConsole("[SUCCESS] Data inserted under key 'myFloatKey'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 2. Put data</b><br />
+const floatArray = new Float32Array([1.11, 2.22, 3.33]);<br />
+await videoDB.put("floatStore", "myFloatKey", floatArray);<br /><br />
+</code>
+        `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'floatStore'...");
+                const retrievedFloatData = await videoDB.get("floatStore", "myFloatKey");
+                logToConsole("[SUCCESS] Retrieved data: " + retrievedFloatData.join(", "));
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 3. Get data</b><br />
+const retrievedFloatData = await videoDB.get("floatStore", "myFloatKey");<br />
+console.log("Retrieved:", retrievedFloatData);<br /><br />
+</code>
+        `);
+
+                // 4. Delete data (simulate by overwriting with an empty array)
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("floatStore", "myFloatKey", new Float32Array([]));
+                logToConsole("[SUCCESS] Overwrote 'myFloatKey' with empty Float32Array.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 4. Delete data by overwriting</b><br />
+await videoDB.put("floatStore", "myFloatKey", new Float32Array([]));<br /><br />
+</code>
+        `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'floatStore'...");
+                videoDB.deleteObjectStore("floatStore");
+                logToConsole("[SUCCESS] 'floatStore' deleted.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. Delete the store</b><br />
+videoDB.deleteObjectStore("floatStore");<br /><br />
+</code>
+        `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Multi-step demo for creating and managing a Float64Array Object Store.
+         */
+        async function manageFloat64Store() {
+            logToConsole("[TASK] Managing a Float64Array Object Store...");
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create the Float64 store
+                logToConsole("[Step 1] Creating Float64 store 'float64Store'...");
+                videoDB.createObjectStore("float64Store", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Float64Array",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'float64Store'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Create a Float64 store</b><br />
+videoDB.createObjectStore("float64Store", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Float64Array",<br />
+    bufferSize: 1024 * 1024,<br />
+    totalRows: 50<br />
+});<br /><br />
+</code>
+        `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting Float64 data into 'float64Store'...");
+                const float64Array = new Float64Array([10.01, 20.02, 30.03]);
+                await videoDB.put("float64Store", "myFloat64Key", float64Array);
+                logToConsole("[SUCCESS] Data inserted under key 'myFloat64Key'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 2. Put data</b><br />
+const float64Array = new Float64Array([10.01, 20.02, 30.03]);<br />
+await videoDB.put("float64Store", "myFloat64Key", float64Array);<br /><br />
+</code>
+        `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'float64Store'...");
+                const retrievedFloat64Data = await videoDB.get("float64Store", "myFloat64Key");
+                logToConsole("[SUCCESS] Retrieved data: " + retrievedFloat64Data.join(", "));
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 3. Get data</b><br />
+const retrievedFloat64Data = await videoDB.get("float64Store", "myFloat64Key");<br />
+console.log("Retrieved:", retrievedFloat64Data);<br /><br />
+</code>
+        `);
+
+                // 4. Delete data
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("float64Store", "myFloat64Key", new Float64Array([]));
+                logToConsole("[SUCCESS] Overwrote 'myFloat64Key' with empty Float64Array.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 4. Delete data by overwriting</b><br />
+await videoDB.put("float64Store", "myFloat64Key", new Float64Array([]));<br /><br />
+</code>
+        `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'float64Store'...");
+                videoDB.deleteObjectStore("float64Store");
+                logToConsole("[SUCCESS] 'float64Store' deleted.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. Delete the store</b><br />
+videoDB.deleteObjectStore("float64Store");<br /><br />
+</code>
+        `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Multi-step demo for creating and managing an Int32Array Object Store.
+         */
+        async function manageInt32Store() {
+            logToConsole("[TASK] Managing an Int32Array Object Store...");
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create the Int32 store
+                logToConsole("[Step 1] Creating Int32 store 'int32Store'...");
+                videoDB.createObjectStore("int32Store", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Int32Array",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'int32Store'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Create an Int32 store</b><br />
+videoDB.createObjectStore("int32Store", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Int32Array",<br />
+    bufferSize: 1024 * 1024,<br />
+    totalRows: 50<br />
+});<br /><br />
+</code>
+        `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting Int32 data into 'int32Store'...");
+                const int32Array = new Int32Array([-1, 0, 99999]);
+                await videoDB.put("int32Store", "myInt32Key", int32Array);
+                logToConsole("[SUCCESS] Data inserted under key 'myInt32Key'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 2. Put data</b><br />
+const int32Array = new Int32Array([-1, 0, 99999]);<br />
+await videoDB.put("int32Store", "myInt32Key", int32Array);<br /><br />
+</code>
+        `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'int32Store'...");
+                const retrievedInt32Data = await videoDB.get("int32Store", "myInt32Key");
+                logToConsole("[SUCCESS] Retrieved data: " + retrievedInt32Data.join(", "));
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 3. Get data</b><br />
+const retrievedInt32Data = await videoDB.get("int32Store", "myInt32Key");<br />
+console.log("Retrieved:", retrievedInt32Data);<br /><br />
+</code>
+        `);
+
+                // 4. Delete data (simulate by overwriting)
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("int32Store", "myInt32Key", new Int32Array([]));
+                logToConsole("[SUCCESS] Overwrote 'myInt32Key' with empty Int32Array.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 4. Delete data by overwriting</b><br />
+await videoDB.put("int32Store", "myInt32Key", new Int32Array([]));<br /><br />
+</code>
+        `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'int32Store'...");
+                videoDB.deleteObjectStore("int32Store");
+                logToConsole("[SUCCESS] 'int32Store' deleted.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. Delete the store</b><br />
+videoDB.deleteObjectStore("int32Store");<br /><br />
+</code>
+        `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Multi-step demo for creating and managing a Uint32Array Object Store.
+         */
+        async function manageUint32Store() {
+            logToConsole("[TASK] Managing a Uint32Array Object Store...");
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create the Uint32 store
+                logToConsole("[Step 1] Creating Uint32 store 'uint32Store'...");
+                videoDB.createObjectStore("uint32Store", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Uint32Array",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'uint32Store'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Create a Uint32 store</b><br />
+videoDB.createObjectStore("uint32Store", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Uint32Array",<br />
+    bufferSize: 1024 * 1024,<br />
+    totalRows: 50<br />
+});<br /><br />
+</code>
+        `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting Uint32 data into 'uint32Store'...");
+                const uint32Array = new Uint32Array([123456, 987654321, 42]);
+                await videoDB.put("uint32Store", "myUint32Key", uint32Array);
+                logToConsole("[SUCCESS] Data inserted under key 'myUint32Key'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 2. Put data</b><br />
+const uint32Array = new Uint32Array([123456, 987654321, 42]);<br />
+await videoDB.put("uint32Store", "myUint32Key", uint32Array);<br /><br />
+</code>
+        `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'uint32Store'...");
+                const retrievedUint32Data = await videoDB.get("uint32Store", "myUint32Key");
+                logToConsole("[SUCCESS] Retrieved data: " + retrievedUint32Data.join(", "));
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 3. Get data</b><br />
+const retrievedUint32Data = await videoDB.get("uint32Store", "myUint32Key");<br />
+console.log("Retrieved:", retrievedUint32Data);<br /><br />
+</code>
+        `);
+
+                // 4. Delete data
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("uint32Store", "myUint32Key", new Uint32Array([]));
+                logToConsole("[SUCCESS] Overwrote 'myUint32Key' with empty Uint32Array.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 4. Delete data by overwriting</b><br />
+await videoDB.put("uint32Store", "myUint32Key", new Uint32Array([]));<br /><br />
+</code>
+        `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'uint32Store'...");
+                videoDB.deleteObjectStore("uint32Store");
+                logToConsole("[SUCCESS] 'uint32Store' deleted.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. Delete the store</b><br />
+videoDB.deleteObjectStore("uint32Store");<br /><br />
+</code>
+        `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Multi-step demo for creating and managing a Uint8Array Object Store.
+         */
+        async function manageUint8Store() {
+            logToConsole("[TASK] Managing a Uint8Array Object Store...");
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                // 1. Create the Uint8 store
+                logToConsole("[Step 1] Creating Uint8 store 'uint8Store'...");
+                videoDB.createObjectStore("uint8Store", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Uint8Array",
+                    bufferSize: 1024 * 1024,
+                    totalRows: 50
+                });
+                logToConsole("[SUCCESS] Created 'uint8Store'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 1. Create a Uint8 store</b><br />
+videoDB.createObjectStore("uint8Store", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Uint8Array",<br />
+    bufferSize: 1024 * 1024,<br />
+    totalRows: 50<br />
+});<br /><br />
+</code>
+        `);
+
+                // 2. Put data
+                logToConsole("[Step 2] Putting Uint8 data into 'uint8Store'...");
+                const uint8Array = new Uint8Array([0, 255, 128, 64]);
+                await videoDB.put("uint8Store", "myUint8Key", uint8Array);
+                logToConsole("[SUCCESS] Data inserted under key 'myUint8Key'.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 2. Put data</b><br />
+const uint8Array = new Uint8Array([0, 255, 128, 64]);<br />
+await videoDB.put("uint8Store", "myUint8Key", uint8Array);<br /><br />
+</code>
+        `);
+
+                // 3. Get data
+                logToConsole("[Step 3] Retrieving data from 'uint8Store'...");
+                const retrievedUint8Data = await videoDB.get("uint8Store", "myUint8Key");
+                logToConsole("[SUCCESS] Retrieved data: " + retrievedUint8Data.join(", "));
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 3. Get data</b><br />
+const retrievedUint8Data = await videoDB.get("uint8Store", "myUint8Key");<br />
+console.log("Retrieved:", retrievedUint8Data);<br /><br />
+</code>
+        `);
+
+                // 4. Delete data
+                logToConsole("[Step 4] Deleting data (overwriting)...");
+                await videoDB.put("uint8Store", "myUint8Key", new Uint8Array([]));
+                logToConsole("[SUCCESS] Overwrote 'myUint8Key' with empty Uint8Array.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 4. Delete data by overwriting</b><br />
+await videoDB.put("uint8Store", "myUint8Key", new Uint8Array([]));<br /><br />
+</code>
+        `);
+
+                // 5. Delete the store
+                logToConsole("[Step 5] Deleting 'uint8Store'...");
+                videoDB.deleteObjectStore("uint8Store");
+                logToConsole("[SUCCESS] 'uint8Store' deleted.");
+
+                logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. Delete the store</b><br />
+videoDB.deleteObjectStore("uint8Store");<br /><br />
+</code>
+        `);
+
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Displays the VideoDB class documentation in the right pane.
+         */
+        function showClassDocs() {
+            // Optional: clear console and code pane first
+            clearConsole();
+            clearCodePane();
+
+            // Below is the main class documentation HTML; note the added <br /><br /> tags
+            const docHtml = `
+<h1>VideoDB Class Documentation</h1><br /><br />
+
+<p>
+  The <code>VideoDB</code> class provides functionality for managing object stores with
+  <strong>CPU-based metadata</strong>. Each object store can represent a collection of key-value
+  pairs (or “rows”), fully tracked on the CPU, while the actual row data resides in GPU buffers
+  for efficiency...
+</p><br /><br />
+
+<hr /><br /><br />
+
+<h2>Constructor</h2><br /><br />
+
+<h3><code>constructor(device)</code></h3><br /><br />
+
+<ul>
+  <li>
+    <strong>Parameters</strong>
+    <ul>
+      <li>
+        <code>device</code> (<code>GPUDevice</code>): The WebGPU device instance used
+        to allocate GPU buffers.
+      </li>
+    </ul>
+  </li>
+  <li>
+    <strong>Behavior</strong><br>
+    Initializes internal data structures for CPU-based metadata (<code>storeMetadataMap</code>)
+    and a map of store <em>keys</em> to row IDs (<code>storeKeyMap</code>).
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>// Suppose you obtained device from navigator.gpu.requestAdapter()
+const videoDB = new VideoDB(device);
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<hr /><br /><br />
+
+<h2>Methods</h2><br /><br />
+
+<h3><code>createObjectStore(storeName, options)</code></h3><br /><br />
+
+<ul>
+  <li>
+    <strong>Parameters</strong>
+    <ul>
+      <li><code>storeName</code> (<code>string</code>): The name for the new store.</li>
+      <li>
+        <code>options</code> (<code>object</code>):
+        <ul>
+          <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): The data format.</li>
+          <li>
+            <code>typedArrayType</code> (optional):
+            The typed array constructor name (e.g. <code>"Float32Array"</code>, <code>"Float64Array"</code>,
+            <code>"Uint32Array"</code>, <code>"Uint8Array"</code>).
+          </li>
+          <li><code>bufferSize</code> (<code>number</code>): The chunk size for GPU buffers (e.g., 250 MB).</li>
+          <li><code>rowSize</code> (<code>number</code>, optional): The row’s fixed size (if relevant).</li>
+          <li><code>totalRows</code> (<code>number</code>): A hint for total row capacity.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <strong>Behavior</strong><br>
+    Creates internal metadata for the store and adds it to <code>storeMetadataMap</code>, also
+    sets up a <code>Map&lt;string, number&gt;</code> for <code>key → rowId</code> references.
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>videoDB.createObjectStore("myFloatStore", {
+  dataType: "TypedArray",
+  typedArrayType: "Float32Array",
+  bufferSize: 250 * 1024 * 1024,
+  totalRows: 1000
+});
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<h3><code>listObjectStores()</code></h3><br /><br />
+
+<ul>
+  <li><strong>Parameters</strong><br>None</li>
+  <li><strong>Returns</strong><br><code>string[]</code>: The list of all object store names.</li>
+  <li>
+    <strong>Behavior</strong><br>
+    Returns the keys of <code>storeMetadataMap</code> as an array, indicating all known stores.
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>const stores = videoDB.listObjectStores();
+console.log(stores); // e.g. ["myFloatStore", "jsonStore"]
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<h3><code>deleteObjectStore(storeName)</code></h3><br /><br />
+
+<ul>
+  <li>
+    <strong>Parameters</strong>
+    <ul>
+      <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
+    </ul>
+  </li>
+  <li><strong>Returns</strong><br><code>void</code></li>
+  <li>
+    <strong>Behavior</strong><br>
+    <ul>
+      <li>Removes the store’s metadata from <code>storeMetadataMap</code>.</li>
+      <li>Deletes the store’s key map from <code>storeKeyMap</code>.</li>
+      <li>Iterates over all allocated GPU buffers for that store and calls <code>.destroy()</code> on each.</li>
+      <li>Logs a message indicating the store is deleted.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>videoDB.deleteObjectStore("myFloatStore");
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<h3><code>put(storeName, key, value)</code></h3><br /><br />
+
+<ul>
+  <li>
+    <strong>Parameters</strong>
+    <ul>
+      <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+      <li><code>key</code> (<code>string</code>): A unique string identifying the row.</li>
+      <li><code>value</code> (<code>any</code>): The data. Must match the store’s <code>typedArrayType</code> if typed.</li>
+    </ul>
+  </li>
+  <li><strong>Returns</strong><br><code>Promise&lt;void&gt;</code></li>
+  <li>
+    <strong>Behavior</strong>
+    <ol>
+      <li>
+        If no existing row, allocate space in the last buffer chunk (e.g., 250 MB). If it won’t fit,
+        create a new chunk. Write data at that offset and store row metadata (<code>rowId</code>, <code>offset</code>, etc.).
+      </li>
+      <li>
+        If the row already exists and the new data is bigger, mark the old row as inactive, allocate
+        a new row, and write the updated data there.
+      </li>
+      <li>Marks store metadata as dirty (<code>dirtyMetadata = true</code>) and increments <code>metadataVersion</code>.</li>
+    </ol>
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>// Inserting a Float32Array into "embeddingStore"
+const vector = new Float32Array([1, 2, 3, 4]);
+await videoDB.put("embeddingStore", "vector:001", vector);
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<h3><code>get(storeName, key)</code></h3><br /><br />
+
+<ul>
+  <li>
+    <strong>Parameters</strong>
+    <ul>
+      <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+      <li><code>key</code> (<code>string</code>): The key identifying which row to read.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Returns</strong><br><code>Promise&lt;any|null&gt;</code>: Deserialized data or <code>null</code> if inactive.
+  </li>
+  <li>
+    <strong>Behavior</strong>
+    <ol>
+      <li>Looks up <code>rowId</code> from the store’s key map. If none, returns <code>null</code>.</li>
+      <li>If flagged inactive, returns <code>null</code>.</li>
+      <li>Maps the chunk buffer (<code>GPUMapMode.READ</code>) at the row’s <code>offset</code>.</li>
+      <li>Copies data into CPU memory, then unmaps the buffer.</li>
+      <li>Deserializes (JSON, TypedArray, or ArrayBuffer).</li>
+      <li>Returns the result.</li>
+    </ol>
+  </li>
+  <li>
+    <strong>Example</strong>
+    <pre><code>const vector = await videoDB.get("embeddingStore", "vector:001");
+console.log("Retrieved vector length:", vector.length);
+</code></pre>
+  </li>
+</ul><br /><br />
+
+<hr /><br /><br />
+
+<div style="font-family: Consolas, 'Courier New', monospace; color: #333; background-color: #f5f5f5; border: 1px solid #ccc; padding: 20px; margin: 10px 0; border-radius: 4px;">
+  <h2 style="margin-top: 0;">Usage Example</h2><br /><br />
+  <pre style="margin: 0;">
+<code style="white-space: pre;">
+// 1. Obtain a GPUDevice (e.g., after requestAdapter()/requestDevice())
+const device = await navigator.gpu.requestAdapter()
+  .then(adapter => adapter.requestDevice());
+
+// 2. Instantiate the VideoDB class
+const videoDB = new VideoDB(device);
+
+// 3. Create an object store for Float32 typed arrays
+videoDB.createObjectStore("embeddingStore", {
+    dataType: "TypedArray",
+    typedArrayType: "Float32Array",
+    bufferSize: 250 * 1024 * 1024, // 250MB
+    totalRows: 1000
+});
+
+// 4. Put data
+const embed = new Float32Array([1.23, 4.56, 7.89]);
+await videoDB.put("embeddingStore", "embed1", embed);
+
+// 5. Retrieve data
+const result = await videoDB.get("embeddingStore", "embed1");
+console.log("Retrieved typed array:", result);
+
+// 6. Create a JSON-based store
+videoDB.createObjectStore("myJsonStore", {
+    dataType: "JSON",
+    bufferSize: 250 * 1024 * 1024,
+    totalRows: 100
+});
+
+const demoObject = {
+    userId: 12345,
+    name: "John Doe",
+    preferences: { theme: "dark", notifications: true },
+    timestamp: new Date().toISOString()
+};
+await videoDB.put("myJsonStore", "user:12345", demoObject);
+
+// 7. Read the JSON back
+const doc = await videoDB.get("myJsonStore", "user:12345");
+console.log("Retrieved JSON doc:", doc);
+
+// 8. Delete the store
+videoDB.deleteObjectStore("myJsonStore");
+</code>
+  </pre><br /><br />
+</div>
+`;
+
+            // Insert into the right pane
+            document.getElementById('codePane').innerHTML = docHtml;
+        }
+
+
+        // Initialize the demo page once the DOM is ready
+        window.addEventListener('DOMContentLoaded', () => {
+            initDemoPage();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ESNext"
+    ],
+    "strict": true,
+    "sourceMap": true,
+    "outDir": "./wwwroot/js",
+    "rootDir": "./src",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "types": [ "@webgpu/types" ]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
