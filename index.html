@@ -122,7 +122,7 @@
     </style>
 </head>
 <body>
-    <h1>VideoDB Demo Page</h1>
+    <h3>VideoDB Demo Page</h3>
     <br />
     <p>
         The <code>VideoDB</code> class is a GPU-backed alternative to <code>IndexedDB</code>, designed for high-performance data storage and retrieval. It leverages <code>WebGPU</code> to manage data in GPU memory, allowing for faster access and computation compared to traditional browser storage solutions.
@@ -153,6 +153,12 @@
                 <li>
                     <a href="#" data-task="manageAllStores">Create and Manage All Store Types</a>
                     <span class="task-description">Create, put data, get data, delete data, then delete the store for JSON, Float32, Float64, Int32, Uint32, Uint8.</span>
+                </li>
+
+                <!-- Insert this block below the existing "Create and Manage All Store Types" list item -->
+                <li>
+                    <a href="#" data-task="testErrors">Force a Bunch of Errors</a>
+                    <span class="task-description">Deliberately attempt invalid operations to showcase error handling.</span>
                 </li>
 
                 <li>
@@ -195,7 +201,7 @@
         function logToConsole(msg) {
             const consoleDiv = document.getElementById('consoleLog');
 
-            // Replace [SUCCESS] / [ERROR] tags with colored <span> elements
+            // Replace [SUCCESS] / [ERROR] / [TASK] tags with colored <b> elements
             // Also convert any "\n" (newlines) into <br/> for line breaks in HTML
             let styledMsg = msg
                 .replace(/\[SUCCESS\]/g, "<b style='color: green;'>[SUCCESS]</b>")
@@ -262,6 +268,9 @@
                             break;
                         case 'manageAllStores':
                             await manageAllStores();
+                            break;
+                        case 'testErrors':
+                            await testErrors();
                             break;
                         case 'classDocs':
                             showClassDocs();
@@ -537,6 +546,220 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             } catch (err) {
                 logToConsole("[ERROR] " + err.message);
             }
+        }
+
+        /**
+         * Attempts various invalid operations to highlight how the VideoDB class handles errors.
+         * Each step is designed to fail and display an [ERROR] in the console.
+         */
+        async function testErrors() {
+            logToConsole("[TASK] Testing error scenarios...");
+
+            // Ensure we have a device/videoDB
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            // 1. Create a store with a name that already exists
+            logToConsole("[Step 1] Attempting to create a store with a name that already exists...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 1: Create 'existingStore' twice<br /></b>
+videoDB.createObjectStore("existingStore", {<br />
+    dataType: "JSON",<br />
+    bufferSize: 256,<br />
+    totalRows: 1<br />
+});<br />
+videoDB.createObjectStore("existingStore", {<br />
+    dataType: "JSON",<br />
+    bufferSize: 256,<br />
+    totalRows: 1<br />
+});<br />
+</code><br />
+    `);
+            try {
+                videoDB.createObjectStore("existingStore", {
+                    dataType: "JSON",
+                    bufferSize: 256,
+                    totalRows: 1
+                });
+                // Creating it a second time with same name → should throw
+                videoDB.createObjectStore("existingStore", {
+                    dataType: "JSON",
+                    bufferSize: 256,
+                    totalRows: 1
+                });
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole(""); // blank line between steps
+
+            // 2. Create a TypedArray store without specifying typedArrayType
+            logToConsole("[Step 2] Attempting to create a TypedArray store with no typedArrayType...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 2: Omit 'typedArrayType' in a TypedArray store<br /></b>
+videoDB.createObjectStore("badTypedArrayStore", {<br />
+    dataType: "TypedArray",<br />
+    bufferSize: 1024,<br />
+    totalRows: 10<br />
+});<br />
+</code><br />
+    `);
+            try {
+                videoDB.createObjectStore("badTypedArrayStore", {
+                    dataType: "TypedArray",
+                    // typedArrayType missing, should fail
+                    bufferSize: 1024,
+                    totalRows: 10
+                });
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 3. Add a duplicate key to test "add" mode conflict
+            logToConsole("[Step 3] Adding a duplicate key to a store using 'add' mode...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 3: Duplicate key "testKey" using 'add'<br /></b>
+videoDB.createObjectStore("uniqueKeysOnly", {<br />
+    dataType: "JSON",<br />
+    bufferSize: 1024,<br />
+    totalRows: 5<br />
+});<br />
+await videoDB.add("uniqueKeysOnly", "testKey", { val: 1 });<br />
+await videoDB.add("uniqueKeysOnly", "testKey", { val: 2 });<br />
+</code><br />
+    `);
+            try {
+                videoDB.createObjectStore("uniqueKeysOnly", {
+                    dataType: "JSON",
+                    bufferSize: 1024,
+                    totalRows: 5
+                });
+                await videoDB.add("uniqueKeysOnly", "testKey", { val: 1 });
+                // Attempt to add again with the same key → should fail
+                await videoDB.add("uniqueKeysOnly", "testKey", { val: 2 });
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 4. Put the wrong data type into a TypedArray store
+            logToConsole("[Step 4] Putting a JSON object in a Float32Array store...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 4: Attempt to store non-float data in a Float32Array store<br /></b>
+videoDB.createObjectStore("floatStore", {<br />
+    dataType: "TypedArray",<br />
+    typedArrayType: "Float32Array",<br />
+    bufferSize: 1024,<br />
+    totalRows: 5<br />
+});<br />
+await videoDB.put("floatStore", "wrongData", { not: "a float array" });<br />
+</code><br />
+    `);
+            try {
+                videoDB.createObjectStore("floatStore", {
+                    dataType: "TypedArray",
+                    typedArrayType: "Float32Array",
+                    bufferSize: 1024,
+                    totalRows: 5
+                });
+                // Attempting to store a JSON object in a Float32Array store → should fail
+                await videoDB.put("floatStore", "wrongData", { not: "a float array" });
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 5. Get a key that does not exist
+            logToConsole("[Step 5] Attempting to get a non-existing key from 'floatStore'...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 5: Get a key that doesn't exist in 'floatStore'<br /></b>
+const missingData = await videoDB.get("floatStore", "doesNotExist");<br />
+</code><br />
+    `);
+            try {
+                const missingData = await videoDB.get("floatStore", "doesNotExist");
+                if (missingData === null) {
+                    logToConsole("[SUCCESS] Key not found, returned null as expected.");
+                } else {
+                    logToConsole("[ERROR] Unexpected result, expected null!");
+                }
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 6. Delete a key that does not exist
+            logToConsole("[Step 6] Deleting a non-existing key from 'floatStore'...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 6: Delete a key that doesn't exist<br /></b>
+await videoDB.delete("floatStore", "randomKey");<br />
+</code><br />
+    `);
+            try {
+                await videoDB.delete("floatStore", "randomKey");
+                // This shouldn't throw an Error, but logs a warning
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 7. Delete a store that doesn't exist
+            logToConsole("[Step 7] Deleting a non-existing store...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 7: Delete "fakeStoreName" which doesn't exist<br /></b>
+videoDB.deleteObjectStore("fakeStoreName");<br />
+</code><br />
+    `);
+            try {
+                videoDB.deleteObjectStore("fakeStoreName");
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 8. Open cursor on a store that doesn't exist
+            logToConsole("[Step 8] Opening cursor on 'fakeCursorStore'...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 8: Attempt to open a cursor on non-existing "fakeCursorStore"<br /></b>
+for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
+    // ...<br />
+}<br />
+</code><br />
+    `);
+            try {
+                for await (const record of videoDB.openCursor("fakeCursorStore")) {
+                    // Not expected to reach here
+                }
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            // 9. Clear a store that doesn’t exist
+            logToConsole("[Step 9] Clearing a store that doesn’t exist...");
+            logCommandToConsole(`
+<code>
+<b style="color:green;">// Step 9: Attempt to clear a non-existing "reallyFakeStore"<br /></b>
+videoDB.clear("reallyFakeStore");<br />
+</code><br />
+    `);
+            try {
+                videoDB.clear("reallyFakeStore");
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole("");
+
+            logToConsole("[INFO] Finished testing error scenarios.");
         }
 
         /**
