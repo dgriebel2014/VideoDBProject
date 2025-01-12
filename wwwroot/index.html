@@ -1246,14 +1246,9 @@ videoDB.deleteObjectStore("myJsonStore");
 </div>
 `;
 
-            // Write to the right pane (or wherever desired)
-            writeToCodePane(docHtml);
-        }
-
             // Insert into the right pane
             document.getElementById('codePane').innerHTML = docHtml;
         }
-
 
         // Initialize the demo page once the DOM is ready
         window.addEventListener('DOMContentLoaded', () => {
