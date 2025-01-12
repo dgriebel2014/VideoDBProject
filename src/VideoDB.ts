@@ -4,6 +4,13 @@
 const ROW_INACTIVE_FLAG = 0x1;
 
 /**
+ * Rounds `value` up to the nearest multiple of `align`.
+ */
+function roundUp(value: number, align: number): number {
+    return Math.ceil(value / align) * align;
+}
+
+/**
  * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
  * @param jsonString - The original JSON string to pad.
  * @returns The padded JSON string with a UTF-8 length multiple of 4.
@@ -145,6 +152,7 @@ export class VideoDB {
      * @throws {Error} If the store does not exist or a record with the same key is already active.
      */
     public async add(storeName: string, key: string, value: any): Promise<void> {
+        debugger;
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
@@ -686,15 +694,22 @@ export class VideoDB {
         offset: number;
     } {
         const gpuBuffer = lastBufferMeta.gpuBuffer!;
-        const offset = usedBytes;
-        (gpuBuffer as any)._usedBytes = offset + size;
+        // Align the offset to 256
+        const alignedOffset = roundUp(usedBytes, 256);
+
+        // Check capacity after alignment
+        if (alignedOffset + size > gpuBuffer.size) {
+            throw new Error("No space left in the last buffer after alignment.");
+        }
+
+        (gpuBuffer as any)._usedBytes = alignedOffset + size;
         lastBufferMeta.rowCount += 1;
 
         const bufferIndex = lastBufferMeta.bufferIndex;
         return {
             gpuBuffer,
             bufferIndex,
-            offset
+            offset: alignedOffset
         };
     }
 
@@ -755,8 +770,8 @@ export class VideoDB {
                 // Existing JSON logic
                 let jsonString = JSON.stringify(value);
                 jsonString = padJsonTo4Bytes(jsonString); // Your existing JSON-specific string padding
-                const utf8Buffer = new TextEncoder().encode(jsonString).buffer;
-                resultBuffer = utf8Buffer;
+                const cloned = new TextEncoder().encode(jsonString).slice();
+                resultBuffer = cloned.buffer;
                 break;
             }
 
