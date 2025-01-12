@@ -349,17 +349,17 @@ videoDB = new VideoDB(device);<br /><br />
         }
 
         /**
-         * A helper to perform the same 5-step “create, put, get, delete data, delete store” process
+         * A helper to perform a multi-step test (create → add → get → put → openCursor → delete row → clear → delete store)
          * for any store configuration (JSON or typed arrays).
          * @param {string} storeName
          * @param {object} storeOptions - Options for createObjectStore
          * @param {*} dataToInsert - Data to insert (JSON object or TypedArray)
-         * @param {string} key - The key under which data will be put
+         * @param {string} key - The key under which data will be inserted
          */
         async function manageSingleStore(storeName, storeOptions, dataToInsert, key) {
             logToConsole(`[TASK] Managing store '${storeName}'...`);
 
-            // 1. Create the store
+            // STEP 1: Create the store
             logToConsole(`[Step 1] Creating store '${storeName}'...`);
             videoDB.createObjectStore(storeName, storeOptions);
             logToConsole(`[SUCCESS] Created '${storeName}'.`);
@@ -369,10 +369,9 @@ videoDB = new VideoDB(device);<br /><br />
 <b style='color:green;'>// 1. Create the store: ${storeName}</b><br />
 videoDB.createObjectStore("${storeName}", ${JSON.stringify(storeOptions, null, 4)});<br /><br />
 </code>
-            `);
+    `);
 
-            // 2. Put data
-            // Build a snippet that accurately reflects typed arrays vs. JSON
+            // STEP 2: Add data (fails if the key already exists)
             let snippetForDataToInsert;
             if (storeOptions.dataType === "TypedArray") {
                 // Example: new Float32Array([1.11, 2.22, 3.33])
@@ -383,73 +382,119 @@ videoDB.createObjectStore("${storeName}", ${JSON.stringify(storeOptions, null, 4
                 snippetForDataToInsert = JSON.stringify(dataToInsert, null, 4);
             }
 
-            logToConsole(`[Step 2] Putting data into '${storeName}' under key '${key}': ${dataToInsert}`);
-            await videoDB.put(storeName, key, dataToInsert);
-            logToConsole(`[SUCCESS] Data inserted under key '${key}'.`);
+            logToConsole(`[Step 2] Adding data into '${storeName}' under key '${key}': ${dataToInsert}`);
+            await videoDB.add(storeName, key, dataToInsert);
+            logToConsole(`[SUCCESS] Data added under key '${key}'.`);
 
             logCommandToConsole(`
 <code>
-<b style='color:green;'>// 2. Put data</b><br />
-const sampleData = ${snippetForDataToInsert};<br />
-await videoDB.put("${storeName}", "${key}", sampleData);<br /><br />
+<b style='color:green;'>// 2. Add data (will fail if key exists)</b><br />
+const dataToAdd = ${snippetForDataToInsert};<br />
+await videoDB.add("${storeName}", "${key}", dataToAdd);<br /><br />
 </code>
-            `);
+    `);
 
-            // 3. Get data
+            // STEP 3: Get the data to confirm the 'add' worked
             logToConsole(`[Step 3] Retrieving data from '${storeName}' key '${key}'...`);
-            const retrieved = await videoDB.get(storeName, key);
+            let retrieved = await videoDB.get(storeName, key);
 
-            // Convert typed array to string if necessary
             let retrievedStr = retrieved;
+            // Convert typed array to string if necessary
             if (retrieved && typeof retrieved.join === "function") {
                 retrievedStr = retrieved.join(", ");
             } else if (typeof retrieved === 'object') {
                 retrievedStr = JSON.stringify(retrieved);
             }
-            logToConsole(`[SUCCESS] Retrieved data: ${retrievedStr}`);
+            logToConsole(`[SUCCESS] Retrieved (from add): ${retrievedStr}`);
 
             logCommandToConsole(`
 <code>
 <b style='color:green;'>// 3. Get data</b><br />
-const retrieved = await videoDB.get("${storeName}", "${key}");<br />
-console.log("Retrieved:", retrieved);<br /><br />
+const retrievedAdd = await videoDB.get("${storeName}", "${key}");
+console.log("Retrieved after add:", retrievedAdd);<br /><br />
 </code>
-            `);
+    `);
 
-            // 4. Delete data (simulate by overwriting with empty object or empty typed array)
-            logToConsole("[Step 4] Deleting data (overwriting)...");
-            let emptyValue = {};
+            // STEP 4: Put data (same key) to demonstrate an update/overwrite
+            const updateObj = (storeOptions.dataType === "TypedArray")
+                ? new self[storeOptions.typedArrayType]([9, 8, 7]) // just an example array
+                : { updatedField: "newValue", time: Date.now() };
+
+            logToConsole(`[Step 4] Putting updated data into '${storeName}' under key '${key}'...`);
+            await videoDB.put(storeName, key, updateObj);
+            logToConsole(`[SUCCESS] Data updated (overwritten) under key '${key}'.`);
+
+            let snippetForUpdate;
             if (storeOptions.dataType === "TypedArray") {
-                // Create an empty typed array of the same type
-                emptyValue = new self[storeOptions.typedArrayType](0);
+                snippetForUpdate = `new ${storeOptions.typedArrayType}([9,8,7])`;
+            } else {
+                snippetForUpdate = JSON.stringify(updateObj, null, 4);
             }
-            await videoDB.put(storeName, key, emptyValue);
-            logToConsole(`[SUCCESS] Overwrote '${key}' with an empty ${storeOptions.typedArrayType || "object"}.`);
-
-            const snippetForEmptyValue = storeOptions.dataType === "TypedArray"
-                ? `new ${storeOptions.typedArrayType}([])`
-                : `{}`;
 
             logCommandToConsole(`
 <code>
-<b style='color:green;'>// 4. Delete data (by overwriting)</b><br />
-await videoDB.put("${storeName}", "${key}", ${snippetForEmptyValue});<br /><br />
+<b style='color:green;'>// 4. Put data (overwrite existing key)</b><br />
+const updatedData = ${snippetForUpdate};<br />
+await videoDB.put("${storeName}", "${key}", updatedData);<br /><br />
 </code>
-            `);
+    `);
 
-            // 5. Delete the store
-            logToConsole(`[Step 5] Deleting store '${storeName}'...`);
+            // STEP 5: OpenCursor to show all active records in the store
+            logToConsole("[Step 5] Iterating over store entries with openCursor...");
+            logCommandToConsole(`
+<code>
+<b style='color:green;'>// 5. OpenCursor to view all keys/values</b><br />
+for await (const record of videoDB.openCursor("${storeName}")) {
+    console.log(record.key, record.value);
+}<br /><br />
+</code>
+    `);
+            try {
+                for await (const record of videoDB.openCursor(storeName)) {
+                    logToConsole(`   Cursor found key='${record.key}' => ${JSON.stringify(record.value)}`);
+                }
+            } catch (err) {
+                logToConsole("[ERROR] " + err.message);
+            }
+            logToConsole(`[SUCCESS] openCursor() iteration finished for '${storeName}'.`);
+
+            // STEP 6: Delete the single record
+            logToConsole("[Step 6] Deleting the single record from the store...");
+            await videoDB.delete(storeName, key);
+            logToConsole(`[SUCCESS] The record with key '${key}' was deleted.`);
+
+            logCommandToConsole(`
+<code>
+<b style='color:green;'>// 6. Delete a single record by key</b><br />
+await videoDB.delete("${storeName}", "${key}");<br /><br />
+</code>
+    `);
+
+            // STEP 7: Clear the entire store
+            logToConsole("[Step 7] Clearing all data in the store...");
+            await videoDB.clear(storeName);
+            logToConsole(`[SUCCESS] The store '${storeName}' has been cleared.`);
+
+            logCommandToConsole(`
+<code>
+<b style='color:green;'>// 7. Clear the store</b><br />
+videoDB.clear("${storeName}");<br /><br />
+</code>
+    `);
+
+            // STEP 8: Finally, delete the store
+            logToConsole(`[Step 8] Deleting store '${storeName}'...`);
             videoDB.deleteObjectStore(storeName);
             logToConsole(`[SUCCESS] '${storeName}' deleted.`);
 
             logCommandToConsole(`
 <code>
-<b style='color:green;'>// 5. Delete the store</b><br />
+<b style='color:green;'>// 8. Delete the store</b><br />
 videoDB.deleteObjectStore("${storeName}");<br /><br />
 </code>
-            `);
+    `);
 
-            // Add a blank line for spacing in the console
+            // End with a blank line for spacing in the console
             logToConsole("");
         }
 

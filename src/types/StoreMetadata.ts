@@ -1,5 +1,4 @@
 // types/StoreMetadata.ts
-
 export interface StoreMetadata {
     dataType: "TypedArray" | "ArrayBuffer" | "JSON";
     typedArrayType?: "Float32Array" | "Float64Array" | "Int32Array" | "Uint32Array" | "Uint8Array";

@@ -21,6 +21,24 @@ function padJsonTo4Bytes(jsonString: string): string {
 }
 
 /**
+ * Pads the given ArrayBuffer to make its byteLength a multiple of 4.
+ * If already aligned, returns the original buffer.
+ */
+function padTo4Bytes(ab: ArrayBuffer): ArrayBuffer {
+    const remainder = ab.byteLength % 4;
+    if (remainder === 0) {
+        // Already aligned
+        return ab;
+    }
+    const needed = 4 - remainder;
+    const padded = new Uint8Array(ab.byteLength + needed);
+    padded.set(new Uint8Array(ab), 0); // copy the original bytes
+    // Extra bytes remain zero
+    return padded.buffer;
+}
+
+
+/**
  * A simplified VideoDB class that:
  * - Uses 250MB GPU buffers as "chunks."
  * - Never destroys or reclaims space in old buffers.
@@ -722,39 +740,54 @@ export class VideoDB {
     }
 
     /**
-     * Converts a given value into an ArrayBuffer based on the store's data type.
-     * @param storeMeta - Metadata defining the store's data type (JSON, TypedArray, ArrayBuffer).
+     * Converts a given value into an ArrayBuffer based on the store's data type,
+     * then pads it to 4 bytes (if needed) before returning.
+     *
+     * @param storeMeta - Metadata defining the store's dataType (JSON, TypedArray, or ArrayBuffer).
      * @param value - The data to be serialized.
-     * @returns An ArrayBuffer containing the serialized data.
+     * @returns A 4-byte-aligned ArrayBuffer containing the serialized data.
      */
     private serializeValueForStore(storeMeta: StoreMetadata, value: any): ArrayBuffer {
+        let resultBuffer: ArrayBuffer;
+
         switch (storeMeta.dataType) {
             case "JSON": {
+                // Existing JSON logic
                 let jsonString = JSON.stringify(value);
-                jsonString = padJsonTo4Bytes(jsonString);
-                return new TextEncoder().encode(jsonString).buffer;
+                jsonString = padJsonTo4Bytes(jsonString); // Your existing JSON-specific string padding
+                const utf8Buffer = new TextEncoder().encode(jsonString).buffer;
+                resultBuffer = utf8Buffer;
+                break;
             }
+
             case "TypedArray": {
+                // For typed arrays, we just grab .buffer
                 if (!storeMeta.typedArrayType) {
                     throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
                 }
-                const TypedArrayCtor = (globalThis as any)[storeMeta.typedArrayType];
-                if (!(value instanceof TypedArrayCtor)) {
+                if (!(value instanceof globalThis[storeMeta.typedArrayType])) {
                     throw new Error(
                         `Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`
                     );
                 }
-                return value.buffer;
+                resultBuffer = (value as { buffer: ArrayBuffer }).buffer;
+                break;
             }
+
             case "ArrayBuffer": {
                 if (!(value instanceof ArrayBuffer)) {
                     throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
                 }
-                return value;
+                resultBuffer = value;
+                break;
             }
+
             default:
                 throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
         }
+
+        // *** Finally, ensure the buffer is 4-byte-aligned for WebGPU. ***
+        return padTo4Bytes(resultBuffer);
     }
 
     /**
@@ -980,27 +1013,28 @@ export class VideoDB {
         return bufMeta.gpuBuffer;
     }
 
-    /**
-     * Writes data into a GPU buffer at the specified offset and ensures JSON-safe padding.
-     * @param gpuBuffer - The GPU buffer to write into.
-     * @param offset - The offset within the buffer.
-     * @param arrayBuffer - The data to write.
-     * @returns The aligned size of the written data.
-     */
     private async writeDataToBuffer(
         gpuBuffer: GPUBuffer,
         offset: number,
         arrayBuffer: ArrayBuffer
     ): Promise<number> {
+        // --- 4-byte alignment fix ---
+        const remainder = arrayBuffer.byteLength % 4;
+        if (remainder !== 0) {
+            // Create a padded copy
+            const needed = 4 - remainder;
+            const padded = new Uint8Array(arrayBuffer.byteLength + needed);
+            padded.set(new Uint8Array(arrayBuffer), 0);
+            arrayBuffer = padded.buffer;
+        }
+
         console.log("Buffer size:", gpuBuffer.size);
         console.log("Offset:", offset, "Write length:", arrayBuffer.byteLength);
 
         try {
-            // Map the buffer for writing
             await gpuBuffer.mapAsync(GPUMapMode.WRITE);
             console.log("Buffer successfully mapped.");
 
-            // Copy directly into the mapped range
             const mappedRange = gpuBuffer.getMappedRange(offset, arrayBuffer.byteLength);
             new Uint8Array(mappedRange).set(new Uint8Array(arrayBuffer));
             gpuBuffer.unmap();
@@ -1010,7 +1044,6 @@ export class VideoDB {
             throw err;
         }
 
-        // Return the actual length of the data written
-        return arrayBuffer.byteLength;
+        return arrayBuffer.byteLength; // new padded length
     }
 }
