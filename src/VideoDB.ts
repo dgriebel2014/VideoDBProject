@@ -118,6 +118,39 @@ export class VideoDB {
     }
 
     /**
+     * Adds data to a GPU-backed store but fails if the key already exists.
+     * @param storeName - The name of the object store.
+     * @param key - The unique key identifying the row.
+     * @param value - The data to be written (JSON, TypedArray, or ArrayBuffer).
+     * @returns A promise that resolves once the data is stored.
+     * @throws {Error} If the store does not exist or a record with the same key is already active.
+     */
+    public async add(storeName: string, key: string, value: any): Promise<void> {
+        const storeMeta = this.storeMetadataMap.get(storeName);
+        if (!storeMeta) {
+            throw new Error(`Object store "${storeName}" does not exist.`);
+        }
+
+        const keyMap = this.storeKeyMap.get(storeName);
+        if (!keyMap) {
+            // Should never happen unless the store is half-initialized
+            throw new Error(`Key map for store "${storeName}" is missing or uninitialized.`);
+        }
+
+        // Serialize the incoming value to an ArrayBuffer
+        const arrayBuffer = this.serializeValueForStore(storeMeta, value);
+
+        // Use the new "add" mode so that if a row exists and is active, it will fail
+        const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "add");
+
+        // Once we have the rowMetadata, finalize the write
+        const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
+        await this.finalizeWrite(storeMeta, rowMetadata, arrayBuffer, gpuBuffer);
+
+        console.log(`Data added for key "${key}" in object store "${storeName}", row ${rowMetadata.rowId}.`);
+    }
+
+    /**
      * Stores or updates data in a GPU-backed store.
      * @param storeName - The name of the object store.
      * @param key - The unique key identifying the row.
@@ -133,25 +166,24 @@ export class VideoDB {
         const keyMap = this.storeKeyMap.get(storeName)!;
         const arrayBuffer = this.serializeValueForStore(storeMeta, value);
 
-        // Locate or create row metadata and perform initial data write
-        const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer);
+        // Use the "put" mode so overwrites are allowed
+        const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "put");
 
-        // Optionally re-write for alignment and finalize metadata
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
         await this.finalizeWrite(storeMeta, rowMetadata, arrayBuffer, gpuBuffer);
 
-        console.log(`Data stored for key "${key}" in object store "${storeName}", row ${rowMetadata.rowId}.`);
+        console.log(`Data stored (put) for key "${key}" in object store "${storeName}", row ${rowMetadata.rowId}.`);
     }
 
     /**
-     * Retrieves data for a given key from the GPU buffer based on CPU metadata.
-     * If the key does not exist or is inactive, it returns null.
-     *
-     * @param {string} storeName - The name of the object store.
-     * @param {string} key - The unique identifier for the data.
-     * @returns {Promise<any | null>} A promise resolving to the deserialized data (object, typed array, or raw bytes),
-     * or null if not found or flagged inactive.
-     */
+         * Retrieves data for a given key from the GPU buffer based on CPU metadata.
+         * If the key does not exist or is inactive, it returns null.
+         *
+         * @param {string} storeName - The name of the object store.
+         * @param {string} key - The unique identifier for the data.
+         * @returns {Promise<any | null>} A promise resolving to the deserialized data (object, typed array, or raw bytes),
+         * or null if not found or flagged inactive.
+         */
     public async get(storeName: string, key: string): Promise<any | null> {
         const storeMeta = this.getStoreMetadata(storeName);
 
@@ -176,6 +208,305 @@ export class VideoDB {
     }
 
     /**
+     * Deletes data for a specific key from the GPU-backed store.
+     * @param storeName - The name of the object store.
+     * @param key - The unique key identifying the row to delete.
+     * @returns A promise that resolves once the data is marked inactive (and optionally zeroed out).
+     */
+    public async delete(storeName: string, key: string): Promise<void> {
+        // 1. Get store metadata & keyMap
+        const storeMeta = this.getStoreMetadata(storeName);
+        const keyMap = this.getKeyMap(storeName);
+
+        // 2. Find row metadata for the active row
+        const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
+        if (!rowMetadata) {
+            console.log(`Key "${key}" not found or already inactive in store "${storeName}".`);
+            return;
+        }
+
+        // 3. Wipe the GPU data (optional, but recommended for "true" deletion)
+        await this.wipeRowDataInGPU(storeMeta, rowMetadata);
+
+        // 4. Mark row as inactive and remove it from the keyMap
+        this.markRowInactive(rowMetadata);
+        keyMap.delete(key);
+
+        // 5. Update store metadata to reflect the change
+        this.updateStoreMetadata(storeMeta);
+
+        console.log(`Deleted data for key "${key}" in object store "${storeName}".`);
+    }
+
+    /**
+     * Removes all rows from the specified object store, destroys all GPU buffers,
+     * and then recreates a single fresh buffer for subsequent usage.
+     *
+     * @param {string} storeName - The name of the object store to clear.
+     * @returns {void}
+     * @throws {Error} If the specified store does not exist.
+     */
+    public clear(storeName: string): void {
+        // 1. Retrieve store metadata and keyMap
+        const storeMeta = this.getStoreMetadata(storeName);
+        const keyMap = this.getKeyMap(storeName);
+
+        // 2. Discard all row metadata
+        storeMeta.rows = [];
+
+        // 3. Destroy all existing GPU buffers
+        for (const bufferMeta of storeMeta.buffers) {
+            if (bufferMeta.gpuBuffer) {
+                bufferMeta.gpuBuffer.destroy();
+            }
+        }
+
+        // 4. Clear the array of buffers
+        storeMeta.buffers = [];
+
+        // 5. Recreate a single new GPU buffer (index = 0)
+        const newGpuBuffer = this.device.createBuffer({
+            size: storeMeta.bufferSize,
+            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: false
+        });
+
+        // 6. Add the newly created buffer to the store's metadata
+        storeMeta.buffers.push({
+            bufferIndex: 0,
+            startRow: -1,
+            rowCount: 0,
+            gpuBuffer: newGpuBuffer
+        });
+
+        // 7. Clear the keyMap so there are no active keys
+        keyMap.clear();
+
+        // 8. Update store metadata and version
+        this.updateStoreMetadata(storeMeta);
+
+        console.log(`Cleared store "${storeName}", destroyed all GPU buffers, and recreated one fresh buffer.`);
+    }
+
+    /**
+    * Opens a cursor for iterating over records in the specified object store.
+    *
+    * @param {string} storeName - The name of the object store to iterate over.
+    * @param {{
+    *   range?: {
+    *     lowerBound?: string;
+    *     upperBound?: string;
+    *     lowerInclusive?: boolean;
+    *     upperInclusive?: boolean;
+    *   };
+    *   direction?: 'next' | 'prev';
+    * }} [options] - Optional parameters to filter and control the iteration.
+    * @returns {AsyncGenerator<{ key: string; value: any }, void, unknown>} An async generator yielding key-value pairs.
+    * @throws {Error} If the specified store does not exist.
+    *
+    * @example
+    * for await (const record of videoDB.openCursor('MyStore')) {
+    *     console.log(record.key, record.value);
+    * }
+    *
+    * @example
+    * const range = { lowerBound: '100', upperBound: '200', lowerInclusive: true, upperInclusive: false };
+    * for await (const record of videoDB.openCursor('MyStore', { range, direction: 'prev' })) {
+    *     console.log(record.key, record.value);
+    * }
+    */
+    public async *openCursor(
+        storeName: string,
+        options?: {
+            range?: {
+                lowerBound?: string;
+                upperBound?: string;
+                lowerInclusive?: boolean;
+                upperInclusive?: boolean;
+            };
+            direction?: 'next' | 'prev';
+        }
+    ): AsyncGenerator<{ key: string; value: any }, void, unknown> {
+        // 1. Retrieve store metadata and keyMap
+        const storeMeta = this.getStoreMetadata(storeName);
+        const keyMap = this.getKeyMap(storeName);
+
+        // 2. Retrieve all active keys
+        let activeKeys = Array.from(keyMap.keys());
+
+        // 3. Apply key range filtering if a range is provided
+        if (options?.range) {
+            activeKeys = this.applyCustomRange(activeKeys, options.range);
+        }
+
+        // 4. Sort keys based on direction
+        if (options?.direction === 'prev') {
+            activeKeys.sort((a, b) => this.compareKeys(b, a));
+        } else {
+            // Default to 'next' direction
+            activeKeys.sort((a, b) => this.compareKeys(a, b));
+        }
+
+        // 5. Iterate over the sorted, filtered keys and yield records
+        for (const key of activeKeys) {
+            const rowMetadata = keyMap.get(key);
+            if (rowMetadata == null) {
+                continue; // Skip if no row metadata found
+            }
+
+            const record = await this.get(storeName, key);
+            if (record !== null) {
+                yield { key, value: record };
+            }
+        }
+    }
+
+    /**
+    * Applies a custom key range to filter the provided keys.
+    *
+    * @param {string[]} keys - The array of keys to filter.
+    * @param {{
+    *   lowerBound?: string;
+    *   upperBound?: string;
+    *   lowerInclusive?: boolean;
+    *   upperInclusive?: boolean;
+    * }} range - The key range to apply.
+    * @returns {string[]} The filtered array of keys that fall within the range.
+    */
+    private applyCustomRange(
+        keys: string[],
+        range: {
+            lowerBound?: string;
+            upperBound?: string;
+            lowerInclusive?: boolean;
+            upperInclusive?: boolean;
+        }
+    ): string[] {
+        return keys.filter((key) => {
+            let withinLower = true;
+            let withinUpper = true;
+
+            if (range.lowerBound !== undefined) {
+                if (range.lowerInclusive) {
+                    withinLower = key >= range.lowerBound;
+                } else {
+                    withinLower = key > range.lowerBound;
+                }
+            }
+
+            if (range.upperBound !== undefined) {
+                if (range.upperInclusive) {
+                    withinUpper = key <= range.upperBound;
+                } else {
+                    withinUpper = key < range.upperBound;
+                }
+            }
+
+            return withinLower && withinUpper;
+        });
+    }
+
+    /**
+     * Retrieves the keyMap for a specific store, throwing an error if not found.
+     *
+     * @param {string} storeName - The name of the object store whose keyMap should be retrieved.
+     * @returns {Map<string, number>} The key-to-rowId mapping for the specified store.
+     * @throws {Error} If no keyMap is found for the given storeName.
+     */
+    private getKeyMap(storeName: string): Map<string, number> {
+        const keyMap = this.storeKeyMap.get(storeName);
+        if (!keyMap) {
+            throw new Error(`Key map for store "${storeName}" is missing or uninitialized.`);
+        }
+        return keyMap;
+    }
+
+    /**
+     * Compares two keys for sorting purposes.
+     * Modify this method if your keys are not simple strings.
+     *
+     * @param {string} a - The first key.
+     * @param {string} b - The second key.
+     * @returns {number} Negative if a < b, positive if a > b, zero if equal.
+     */
+    private compareKeys(a: string, b: string): number {
+        if (a < b) return -1;
+        if (a > b) return 1;
+        return 0;
+    }
+
+    /**
+     * Finds a row’s metadata for the given key if it is active (not flagged as inactive).
+     *
+     * @param {Map<string, number>} keyMap - The mapping of keys to row IDs for this store.
+     * @param {string} key - The unique key identifying the row to look up.
+     * @param {RowMetadata[]} rows - The array of RowMetadata objects for the store.
+     * @returns {RowMetadata | null} The row’s metadata if found and active, or `null` otherwise.
+     */
+    private findActiveRowMetadata(
+        keyMap: Map<string, number>,
+        key: string,
+        rows: RowMetadata[]
+    ): RowMetadata | null {
+        const rowId = keyMap.get(key);
+        if (rowId == null) {
+            return null; // Key not found
+        }
+        const rowMetadata = rows.find((r) => r.rowId === rowId);
+        if (!rowMetadata) {
+            return null; // Row metadata missing
+        }
+        // Check if the row is flagged inactive
+        if ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
+            return null;
+        }
+        return rowMetadata;
+    }
+
+    /**
+     * Overwrites the GPU buffer region for the specified row with zeros.
+     * This effectively wipes out the data in GPU memory for that row.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the store containing the GPU buffer.
+     * @param {RowMetadata} rowMetadata - The metadata for the row to be wiped.
+     * @returns {Promise<void>} A promise that resolves once the wipe operation completes.
+     */
+    private async wipeRowDataInGPU(
+        storeMeta: StoreMetadata,
+        rowMetadata: RowMetadata
+    ): Promise<void> {
+        try {
+            const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
+            const zeroArray = new ArrayBuffer(rowMetadata.length);
+            await this.writeDataToBuffer(gpuBuffer, rowMetadata.offset, zeroArray);
+        } catch (error) {
+            console.error(`Error zeroing out data for rowId=${rowMetadata.rowId}:`, error);
+        }
+    }
+
+    /**
+     * Marks the given row as inactive in CPU metadata (e.g., logically deleted).
+     *
+     * @param {RowMetadata} rowMetadata - The metadata for the row to be marked inactive.
+     * @returns {void}
+     */
+    private markRowInactive(rowMetadata: RowMetadata): void {
+        rowMetadata.flags = (rowMetadata.flags ?? 0) | ROW_INACTIVE_FLAG;
+    }
+
+    /**
+     * Updates the store metadata to indicate that a change has occurred.
+     * This increments the metadata version and sets the `dirtyMetadata` flag.
+     *
+     * @param {StoreMetadata} storeMeta - The store’s metadata object to be updated.
+     * @returns {void}
+     */
+    private updateStoreMetadata(storeMeta: StoreMetadata): void {
+        storeMeta.dirtyMetadata = true;
+        storeMeta.metadataVersion += 1;
+    }
+
+    /**
      * Retrieves the metadata object for a specified store.
      * @param {string} storeName - The name of the store.
      * @returns {StoreMetadata} The metadata object for the specified store.
@@ -190,13 +521,13 @@ export class VideoDB {
     }
 
     /**
-     * Looks up the correct RowMetadata for a given key from the store’s key map.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store.
-     * @param {Map<string, number>} keyMap - A mapping of keys to row IDs for the store.
-     * @param {string} key - The key identifying which row to find.
-     * @returns {RowMetadata | null} The RowMetadata if found and active, or null otherwise.
-     */
+    * Retrieves the row metadata for a given key, ensuring it's active.
+    *
+    * @param {StoreMetadata} storeMeta - The metadata of the target store.
+    * @param {Map<string, number>} keyMap - A mapping of keys to row IDs for the store.
+    * @param {string} key - The key identifying which row to find.
+    * @returns {RowMetadata | null} The RowMetadata if found and active, or null otherwise.
+    */
     private getRowMetadataForKey(
         storeMeta: StoreMetadata,
         keyMap: Map<string, number>,
@@ -207,7 +538,7 @@ export class VideoDB {
             return null;
         }
 
-        const rowMetadata = storeMeta.rows.find(r => r.rowId === rowId);
+        const rowMetadata = storeMeta.rows.find((r) => r.rowId === rowId);
         if (!rowMetadata || (rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
             return null;
         }
@@ -390,30 +721,6 @@ export class VideoDB {
     }
 
     /**
-     * Creates and returns a new GPU buffer chunk for the specified store metadata.
-     * @param {StoreMetadata} storeMeta - The metadata of the store that needs a new chunk.
-     * @returns {BufferMetadata} The metadata for the newly created GPU buffer chunk.
-     */
-    private createNewChunk(storeMeta: StoreMetadata): BufferMetadata {
-        const gpuBuffer = this.device.createBuffer({
-            size: storeMeta.bufferSize,
-            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: false
-        });
-        const bufferIndex = storeMeta.buffers.length;
-
-        const newBufferMeta: BufferMetadata = {
-            bufferIndex,
-            startRow: -1, // We can set this once we know the row ID
-            rowCount: 0,
-            gpuBuffer
-        };
-        storeMeta.buffers.push(newBufferMeta);
-        console.log(`Allocated a new 250MB chunk for store (bufferIndex=${bufferIndex}).`);
-        return newBufferMeta;
-    }
-
-    /**
      * Converts a given value into an ArrayBuffer based on the store's data type.
      * @param storeMeta - Metadata defining the store's data type (JSON, TypedArray, ArrayBuffer).
      * @param value - The data to be serialized.
@@ -450,28 +757,45 @@ export class VideoDB {
     }
 
     /**
-     * Finds or creates a row metadata entry and writes the data if necessary.
+     * Finds or creates a RowMetadata entry for the given key.
+     * - If mode is "add", fail if the row already exists and is active.
+     * - If mode is "put", overwrite if the row already exists (the default put behavior).
+     *
      * @param storeMeta - The metadata of the target store.
-     * @param keyMap - A map of key-to-rowId for the store.
+     * @param keyMap - A map of key → rowId for the store.
      * @param key - The key identifying the row.
      * @param arrayBuffer - The serialized data to be written.
-     * @returns A promise that resolves to the relevant RowMetadata (new or existing).
+     * @param mode - Either "add" (disallow overwrite) or "put" (allow overwrite).
+     * @returns A promise that resolves to the relevant RowMetadata (new or existing/updated).
      */
     private async findOrCreateRowMetadata(
         storeMeta: StoreMetadata,
         keyMap: Map<string, number>,
         key: string,
-        arrayBuffer: ArrayBuffer
+        arrayBuffer: ArrayBuffer,
+        mode: "add" | "put"
     ): Promise<RowMetadata> {
         let rowId = keyMap.get(key);
+
+        // Check if there's an existing row in CPU metadata
         let rowMetadata = rowId == null
             ? null
             : storeMeta.rows.find((r) => r.rowId === rowId) || null;
 
+        // If an active row exists and we are in "add" mode, throw an error immediately
+        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+            // The row is active, so adding a duplicate is not allowed
+            throw new Error(
+                `Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`
+            );
+        }
+
+        // Allocate space in a GPU buffer
         const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
 
-        if (!rowMetadata) {
-            // Create a new row
+        // If row does not exist or is inactive, treat it as a new row
+        if (!rowMetadata || ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+            // Create a new RowMetadata
             rowId = storeMeta.rows.length + 1;
             rowMetadata = {
                 rowId,
@@ -482,10 +806,12 @@ export class VideoDB {
             storeMeta.rows.push(rowMetadata);
             keyMap.set(key, rowId);
 
-            // Initial write of data
+            // Initial write of data for the newly created row
             await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
-        } else {
-            // Handle overwrite or move to new allocation
+        }
+        // Else if row is active and we're in "put" mode, we can overwrite
+        else if (mode === "put") {
+            // Reuse existing row (or possibly relocate it if new data is bigger)
             rowMetadata = await this.updateRowOnOverwrite(storeMeta, rowMetadata, arrayBuffer, keyMap, key);
         }
 
@@ -563,8 +889,7 @@ export class VideoDB {
     }
 
     /**
-     * Copies data from the store’s GPU buffer chunk into a CPU-visible buffer
-     * and returns the contents as a Uint8Array.
+     * Reads data from the GPU buffer based on row metadata.
      *
      * @param {StoreMetadata} storeMeta - The metadata of the target store.
      * @param {RowMetadata} rowMetadata - The row metadata specifying which buffer/offset to read.
@@ -603,19 +928,18 @@ export class VideoDB {
 
         return copiedData;
     }
-
     /**
-     * Converts the raw bytes in a Uint8Array back into the appropriate data type based on store metadata.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store, including `dataType` and `typedArrayType`.
-     * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
-     * @returns {any} The deserialized data, which may be a JSON object, a typed array, or an ArrayBuffer.
-     */
+         * Deserializes the raw data from the GPU buffer based on store metadata.
+         *
+         * @param {StoreMetadata} storeMeta - The metadata of the store.
+         * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
+         * @returns {any} The deserialized data.
+         */
     private deserializeData(storeMeta: StoreMetadata, copiedData: Uint8Array): any {
         switch (storeMeta.dataType) {
             case "JSON": {
                 const jsonString = new TextDecoder().decode(copiedData);
-                return JSON.parse(jsonString);
+                return JSON.parse(jsonString.trim());
             }
             case "TypedArray": {
                 if (!storeMeta.typedArrayType) {
@@ -640,12 +964,13 @@ export class VideoDB {
     }
 
     /**
-     * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
-     * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
-     * @param {number} bufferIndex - The index of the buffer to retrieve.
-     * @returns {GPUBuffer} The GPU buffer at the specified index.
-     * @throws {Error} If the buffer is not found or is uninitialized.
-     */
+    * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
+    *
+    * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
+    * @param {number} bufferIndex - The index of the buffer to retrieve.
+    * @returns {GPUBuffer} The GPU buffer at the specified index.
+    * @throws {Error} If the buffer is not found or is uninitialized.
+    */
     private getBufferByIndex(storeMeta: StoreMetadata, bufferIndex: number): GPUBuffer {
         const bufMeta = storeMeta.buffers[bufferIndex];
         if (!bufMeta || !bufMeta.gpuBuffer) {
