@@ -340,6 +340,7 @@ videoDB = new VideoDB(device);<br /><br />
          */
         async function manageSingleStore(storeName, storeOptions, dataToInsert, key) {
             logToConsole(`[TASK] Managing store '${storeName}'...`);
+
             // 1. Create the store
             logToConsole(`[Step 1] Creating store '${storeName}'...`);
             videoDB.createObjectStore(storeName, storeOptions);
@@ -350,20 +351,31 @@ videoDB = new VideoDB(device);<br /><br />
 <b style='color:green;'>// 1. Create the store: ${storeName}</b><br />
 videoDB.createObjectStore("${storeName}", ${JSON.stringify(storeOptions, null, 4)});<br /><br />
 </code>
-                `);
+    `);
 
             // 2. Put data
-            logToConsole(`[Step 2] Putting data into '${storeName}' under key '${key}'...`);
+            // Build a snippet that accurately reflects typed arrays vs. JSON
+            let snippetForDataToInsert;
+            if (storeOptions.dataType === "TypedArray") {
+                // Example: new Float32Array([1.11, 2.22, 3.33])
+                const arrayData = Array.from(dataToInsert);
+                snippetForDataToInsert = `new ${storeOptions.typedArrayType}(${JSON.stringify(arrayData)})`;
+            } else {
+                // JSON or other data gets normal JSON.stringify
+                snippetForDataToInsert = JSON.stringify(dataToInsert, null, 4);
+            }
+
+            logToConsole(`[Step 2] Putting data into '${storeName}' under key '${key}': ${dataToInsert}`);
             await videoDB.put(storeName, key, dataToInsert);
             logToConsole(`[SUCCESS] Data inserted under key '${key}'.`);
 
             logCommandToConsole(`
 <code>
 <b style='color:green;'>// 2. Put data</b><br />
-const sampleData = ${Array.isArray(dataToInsert) ? JSON.stringify(dataToInsert) : JSON.stringify(dataToInsert, null, 4)};<br />
+const sampleData = ${snippetForDataToInsert};<br />
 await videoDB.put("${storeName}", "${key}", sampleData);<br /><br />
 </code>
-                `);
+    `);
 
             // 3. Get data
             logToConsole(`[Step 3] Retrieving data from '${storeName}' key '${key}'...`);
@@ -371,7 +383,7 @@ await videoDB.put("${storeName}", "${key}", sampleData);<br /><br />
 
             // Convert typed array to string if necessary
             let retrievedStr = retrieved;
-            if (retrieved && retrieved.join) {
+            if (retrieved && typeof retrieved.join === "function") {
                 retrievedStr = retrieved.join(", ");
             } else if (typeof retrieved === 'object') {
                 retrievedStr = JSON.stringify(retrieved);
@@ -384,7 +396,7 @@ await videoDB.put("${storeName}", "${key}", sampleData);<br /><br />
 const retrieved = await videoDB.get("${storeName}", "${key}");<br />
 console.log("Retrieved:", retrieved);<br /><br />
 </code>
-                `);
+    `);
 
             // 4. Delete data (simulate by overwriting with empty object or empty typed array)
             logToConsole("[Step 4] Deleting data (overwriting)...");
@@ -396,12 +408,16 @@ console.log("Retrieved:", retrieved);<br /><br />
             await videoDB.put(storeName, key, emptyValue);
             logToConsole(`[SUCCESS] Overwrote '${key}' with an empty ${storeOptions.typedArrayType || "object"}.`);
 
+            const snippetForEmptyValue = storeOptions.dataType === "TypedArray"
+                ? `new ${storeOptions.typedArrayType}([])`
+                : `{}`;
+
             logCommandToConsole(`
 <code>
 <b style='color:green;'>// 4. Delete data (by overwriting)</b><br />
-await videoDB.put("${storeName}", "${key}", ${storeOptions.dataType === "TypedArray" ? "new " + storeOptions.typedArrayType + "([])" : "{}"});<br /><br />
+await videoDB.put("${storeName}", "${key}", ${snippetForEmptyValue});<br /><br />
 </code>
-                `);
+    `);
 
             // 5. Delete the store
             logToConsole(`[Step 5] Deleting store '${storeName}'...`);
@@ -413,8 +429,9 @@ await videoDB.put("${storeName}", "${key}", ${storeOptions.dataType === "TypedAr
 <b style='color:green;'>// 5. Delete the store</b><br />
 videoDB.deleteObjectStore("${storeName}");<br /><br />
 </code>
-                `);
+    `);
 
+            // Add a blank line for spacing in the console
             logToConsole("");
         }
 
