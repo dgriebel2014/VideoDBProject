@@ -162,6 +162,11 @@
                 </li>
 
                 <li>
+                    <a href="#" data-task="stressTest">Stress Test (Performance / Benchmark)</a>
+                    <span class="task-description">Run a multi-phase performance test on various store types (JSON, Float32, Float64, Int32, Uint8).</span>
+                </li>
+
+                <li>
                     <a href="#" data-task="classDocs">Class Documentation</a>
                     <span class="task-description">View the complete VideoDB class docs in the right pane.</span>
                 </li>
@@ -271,6 +276,9 @@
                             break;
                         case 'testErrors':
                             await testErrors();
+                            break;
+                        case 'stressTest':
+                            await stressTest();
                             break;
                         case 'classDocs':
                             showClassDocs();
@@ -805,6 +813,219 @@ videoDB.clear("reallyFakeStore");<br />
             logToConsole("");
 
             logToConsole("[INFO] Finished testing error scenarios.");
+        }
+
+        /**
+         * Stress Test:
+         * 1) 5-second countdown.
+         * 2) For each store type (JSON, Float32Array, Float64Array, Int32Array, Uint8Array):
+         *    - Create the store.
+         *    - Run add performance for 5s.
+         *    - Run put performance for 5s.
+         *    - Run delete performance for 5s.
+         *    - Delete the store.
+         * 3) Output records/sec for each operation.
+         */
+        async function stressTest() {
+            // Clear console & code pane
+            clearConsole();
+            clearCodePane();
+
+            logToConsole("[TASK] Stress Test: Measuring add, put, and delete performance for multiple store types.");
+
+            // Show code snippet in the right panel
+            logCommandToConsole(`
+<code>
+<b style='color:green;'>// Stress Test Steps</b><br />
+// 1. 5-second countdown in the console.<br />
+// 2. For each store type (JSON, Float32, Float64, Int32, Uint8):<br />
+//    - Create the store.<br />
+//    - Run add performance for 5s.<br />
+//    - Run put performance for 5s.<br />
+//    - Run delete performance for 5s.<br />
+//    - Delete the store.<br />
+// 3. Output records/sec for each operation.<br />
+</code>
+    `);
+
+            // Make sure we have a GPU device
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            // 5-second countdown
+            await fiveSecondCountdown();
+
+            // Store configs
+            const storeConfigs = [
+                {
+                    name: "jsonStress",
+                    options: {
+                        dataType: "JSON",
+                        bufferSize: 50 * 1024 * 1024,
+                        totalRows: 200000
+                    }
+                },
+                {
+                    name: "float32Stress",
+                    options: {
+                        dataType: "TypedArray",
+                        typedArrayType: "Float32Array",
+                        bufferSize: 50 * 1024 * 1024,
+                        totalRows: 200000
+                    }
+                },
+                {
+                    name: "float64Stress",
+                    options: {
+                        dataType: "TypedArray",
+                        typedArrayType: "Float64Array",
+                        bufferSize: 50 * 1024 * 1024,
+                        totalRows: 200000
+                    }
+                },
+                {
+                    name: "int32Stress",
+                    options: {
+                        dataType: "TypedArray",
+                        typedArrayType: "Int32Array",
+                        bufferSize: 50 * 1024 * 1024,
+                        totalRows: 200000
+                    }
+                },
+                {
+                    name: "uint8Stress",
+                    options: {
+                        dataType: "TypedArray",
+                        typedArrayType: "Uint8Array",
+                        bufferSize: 50 * 1024 * 1024,
+                        totalRows: 200000
+                    }
+                }
+            ];
+
+            // Array to collect results
+            const perfResults = [];
+
+            // For each store type, run add/put/delete
+            for (const cfg of storeConfigs) {
+                const { name, options } = cfg;
+                logToConsole(`[INFO] Creating store: ${name}`);
+                videoDB.createObjectStore(name, options);
+
+                // Prepare ~1KB data
+                let dataObj = null;
+                if (options.dataType === "JSON") {
+                    dataObj = createJsonObject1KB(); // ~1KB JSON
+                } else {
+                    const floatCount = 1024 / 4; // 256 floats (1KB for float32/64)
+                    const typedArrayCtor = globalThis[options.typedArrayType];
+                    dataObj = new typedArrayCtor(floatCount);
+                    for (let i = 0; i < floatCount; i++) {
+                        dataObj[i] = Math.random() * 1000;
+                    }
+                }
+
+                // 5s add
+                const addRate = await runPerfPhase(name, "add", dataObj, 5000);
+                // 5s put
+                const putRate = await runPerfPhase(name, "put", dataObj, 5000);
+                // 5s delete
+                const delRate = await runDeletePhase(name, 5000);
+
+                perfResults.push({ store: name, addRate, putRate, delRate });
+
+                // Delete store
+                videoDB.deleteObjectStore(name);
+                logToConsole(`[SUCCESS] Deleted store '${name}' after test.`);
+            }
+
+            // Summarize results
+            logToConsole("[RESULTS] Stress Test Performance:");
+            for (const r of perfResults) {
+                logToConsole(`   ${r.store}: ADD=${r.addRate} rec/sec, PUT=${r.putRate} rec/sec, DEL=${r.delRate} rec/sec`);
+            }
+
+            logToConsole("[INFO] Stress Test completed.");
+        }
+
+        /**
+         * Logs a 5-second countdown in the console.
+         */
+        function fiveSecondCountdown() {
+            return new Promise((resolve) => {
+                logToConsole("[STEP] Starting 5-second countdown...");
+                let remaining = 5;
+                const timer = setInterval(() => {
+                    logToConsole(`[INFO] Countdown: ${remaining}s`);
+                    remaining--;
+                    if (remaining < 0) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 1000);
+            });
+        }
+
+        /**
+         * Creates a ~1KB JSON object (simple approach).
+         */
+        function createJsonObject1KB() {
+            const baseObj = { type: "perf", randomVals: [] };
+            while (JSON.stringify(baseObj).length < 1024) {
+                baseObj.randomVals.push(Math.floor(Math.random() * 1000));
+            }
+            return baseObj;
+        }
+
+        /**
+         * Run 'add' or 'put' ops for 'durationMs' with new keys each time.
+         * Returns approximate records/second.
+         */
+        async function runPerfPhase(storeName, operation, dataObj, durationMs) {
+            logToConsole(`[STEP] Running '${operation}' phase on store '${storeName}' for ${durationMs / 1000}s...`);
+            const startTime = performance.now();
+            let count = 0;
+
+            while (performance.now() - startTime < durationMs) {
+                const key = `perfKey_${Math.random().toString(36).slice(2)}`;
+                try {
+                    if (operation === "add") {
+                        await videoDB.add(storeName, key, dataObj);
+                    } else {
+                        await videoDB.put(storeName, key, dataObj);
+                    }
+                } catch {
+                    // e.g. collision on add -> ignore
+                }
+                count++;
+            }
+
+            const elapsed = (performance.now() - startTime) / 1000;
+            const rate = Math.round(count / elapsed);
+            logToConsole(`[INFO] Completed ~${count} ${operation.toUpperCase()} ops in ${elapsed.toFixed(2)}s => ~${rate} rec/sec`);
+            return rate;
+        }
+
+        /**
+         * Run deletes for 'durationMs' with random keys.
+         * Returns approximate records/second.
+         */
+        async function runDeletePhase(storeName, durationMs) {
+            logToConsole(`[STEP] Running 'delete' phase on store '${storeName}' for ${durationMs / 1000}s...`);
+            const startTime = performance.now();
+            let count = 0;
+
+            while (performance.now() - startTime < durationMs) {
+                const key = `perfKey_${Math.random().toString(36).slice(2)}`;
+                await videoDB.delete(storeName, key);
+                count++;
+            }
+
+            const elapsed = (performance.now() - startTime) / 1000;
+            const rate = Math.round(count / elapsed);
+            logToConsole(`[INFO] Completed ~${count} DELETE ops in ${elapsed.toFixed(2)}s => ~${rate} rec/sec`);
+            return rate;
         }
 
         /**
