@@ -91,6 +91,7 @@ export class VideoDB {
 
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
+
         console.log(`Created object store: ${storeName}`);
     }
 
