@@ -289,9 +289,6 @@
                     }
                 });
             });
-
-            // Optional: Immediately try to request the GPU device
-            await setupDevice();
         }
 
         /**
@@ -310,7 +307,13 @@
                 logToConsole("Check if experimental features are enabled (chrome://flags or edge://flags).");
                 return;
             }
+            if (device) {
+                device = undefined;
+            }
             device = await adapter.requestDevice();
+            if (videoDB) {
+                videoDB = undefined;
+            }
             videoDB = new VideoDB(device);
 
             // Just to confirm that we have the device
