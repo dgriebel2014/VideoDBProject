@@ -153,7 +153,6 @@ export class VideoDB {
         };
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
-        console.log(`Created object store: ${storeName}`);
     }
     /**
      * Deletes an existing object store by name.
@@ -167,7 +166,6 @@ export class VideoDB {
         }
         this.storeMetadataMap.delete(storeName);
         this.storeKeyMap.delete(storeName);
-        console.log(`Deleted object store: ${storeName}`);
     }
     /**
      * Retrieves a list of all existing object store names.
@@ -680,7 +678,6 @@ export class VideoDB {
             rowCount: 0,
             gpuBuffer
         });
-        console.log("Allocated first buffer chunk for store:", storeMeta);
         // Place data at offset 0
         gpuBuffer._usedBytes = size;
         storeMeta.buffers[0].rowCount += 1;
@@ -746,7 +743,6 @@ export class VideoDB {
             rowCount: 1,
             gpuBuffer: newGpuBuffer
         });
-        console.log("Allocated a new buffer chunk at index", newBufferIndex, "for store, usage size:", size);
         return {
             gpuBuffer: newGpuBuffer,
             bufferIndex: newBufferIndex,
