@@ -10,6 +10,84 @@ function roundUp(value: number, align: number): number {
     return Math.ceil(value / align) * align;
 }
 
+/** The Web Worker reference (lazy initialized) */
+let gpuWorker: Worker | null = null;
+function getGpuWorker(): Worker {
+    if (!gpuWorker) {
+        gpuWorker = new Worker(new URL("./gpuWorker.js", import.meta.url), {
+            type: "module",
+        });
+        gpuWorker.onmessage = handleWorkerMessage;
+        // Optionally, send an INIT_DEVICE message to the worker
+        gpuWorker.postMessage({ type: "INIT_DEVICE" });
+    }
+    return gpuWorker;
+}
+
+/**
+ * Handle responses coming back from the worker. 
+ */
+function handleWorkerMessage(evt: MessageEvent) {
+    const msg = evt.data;
+    if (!msg?.type) return;
+
+    switch (msg.type) {
+        case "DEVICE_READY": {
+            console.log("[gpuWorker] Device is ready in worker:", msg.payload);
+            break;
+        }
+        case "WRITE_DONE": {
+            // The worker has successfully written the batch
+            const { storeName, rowCount } = msg.payload;
+            console.log(`[gpuWorker] WRITE_DONE for store="${storeName}" rowCount=${rowCount}`);
+
+            // If we have a pending flush promise for this store, resolve it
+            //if (storeFlushResolvers.has(storeName)) {
+            //    storeFlushResolvers.get(storeName)!.resolve(msg.payload);
+            //    storeFlushResolvers.delete(storeName);
+            //}
+
+            break;
+        }
+        case "ERROR": {
+            console.error("[gpuWorker] Error:", msg.payload);
+
+            // If we have a pending flush promise for some store, reject it
+            // NOTE: in a real app, you might want a storeName in the error, etc.
+            //for (const [storeName, resolvers] of storeFlushResolvers.entries()) {
+            //    resolvers.reject(msg.payload);
+            //    storeFlushResolvers.delete(storeName);
+            //}
+
+            break;
+        }
+    }
+}
+
+/**
+ * Example flush helper that returns a Promise which resolves
+ * once the worker has written everything successfully.
+ */
+async function sendBatchToWorker(
+    storeName: string,
+    dataToWrite: ArrayBuffer,
+    rowCount: number
+): Promise<void> {
+    const worker = getGpuWorker();
+
+    // Create a new promise + store the resolve/reject
+    const promise = new Promise<void>((resolve, reject) => { });
+
+    // Post the data to the worker
+    worker.postMessage({
+        type: "WRITE_BATCH",
+        payload: { storeName, batch: dataToWrite, rowCount },
+    });
+
+    // Wait for the worker to confirm (WRITE_DONE) or error
+    await promise;
+}
+
 /**
  * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
  * @param jsonString - The original JSON string to pad.
@@ -152,7 +230,6 @@ export class VideoDB {
      * @throws {Error} If the store does not exist or a record with the same key is already active.
      */
     public async add(storeName: string, key: string, value: any): Promise<void> {
-        debugger;
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);

@@ -931,7 +931,7 @@ videoDB.clear("reallyFakeStore");<br />
                 // 5s put
                 const putRate = await runPerfPhase(name, "put", dataObj, 5000);
                 // 5s delete
-                const delRate = await runDeletePhase(name, 5000);
+                const delRate = await runDeletePhase(name, 1000);
 
                 perfResults.push({ store: name, addRate, putRate, delRate });
 
@@ -988,7 +988,7 @@ videoDB.clear("reallyFakeStore");<br />
             let count = 0;
 
             while (performance.now() - startTime < durationMs) {
-                const key = `perfKey_${Math.random().toString(36).slice(2)}`;
+                const key = `perfKey_${count}`;
                 try {
                     if (operation === "add") {
                         await videoDB.add(storeName, key, dataObj);
@@ -1008,7 +1008,7 @@ videoDB.clear("reallyFakeStore");<br />
         }
 
         /**
-         * Run deletes for 'durationMs' with random keys.
+         * Run deletes for 'durationMs'
          * Returns approximate records/second.
          */
         async function runDeletePhase(storeName, durationMs) {
@@ -1017,7 +1017,7 @@ videoDB.clear("reallyFakeStore");<br />
             let count = 0;
 
             while (performance.now() - startTime < durationMs) {
-                const key = `perfKey_${Math.random().toString(36).slice(2)}`;
+                const key = `perfKey_${count}`;
                 await videoDB.delete(storeName, key);
                 count++;
             }
