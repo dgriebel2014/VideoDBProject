@@ -132,6 +132,7 @@ export class VideoDB {
     // The new properties that enable caching/batching:
     private pendingWrites: PendingWrite[] = [];
     private readonly BATCH_SIZE = 2000; // e.g. auto-flush after 2000 writes
+    private flushTimer: number | null = null;
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -224,8 +225,8 @@ export class VideoDB {
 
     /**
      * Adds a new record to the specified store without immediately writing to the GPU.
-     * Instead, it caches the data in a pending-writes array. Once the pending array
-     * reaches the batch threshold, this method triggers a flush to the GPU.
+     * Instead, it caches the data in a pending-writes array. Once no writes occur
+     * for 1 second, this method triggers a flush to the GPU.
      *
      * @param {string} storeName - The name of the object store.
      * @param {string} key - The unique key identifying the row.
@@ -262,27 +263,21 @@ export class VideoDB {
             operationType: 'add'
         });
 
-        // Auto-flush if we've reached the batch threshold:
-        if (this.pendingWrites.length >= this.BATCH_SIZE) {
-            await this.flushWrites();
-        }
-
-        console.log(
-            `Queued ADD for key "${key}" in "${storeName}", row ${rowMetadata.rowId}.`
-        );
+        // Reset the flush timer
+        this.resetFlushTimer();
     }
 
     /**
-    * Stores or updates data in the specified store without immediately writing to the GPU.
-    * Instead, it caches the data in a pending-writes array. Once the pending array
-    * reaches the batch threshold, this method triggers a flush to the GPU.
-    *
-    * @param {string} storeName - The name of the object store.
-    * @param {string} key - The unique key identifying the row.
-    * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
-    * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
-    * @throws {Error} If the store does not exist.
-    */
+     * Stores or updates data in the specified store without immediately writing to the GPU.
+     * Instead, it caches the data in a pending-writes array. Once no writes occur
+     * for 1 second, this method triggers a flush to the GPU.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row.
+     * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
+     * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
+     * @throws {Error} If the store does not exist.
+     */
     public async put(storeName: string, key: string, value: any): Promise<void> {
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
@@ -312,46 +307,34 @@ export class VideoDB {
             operationType: 'put'
         });
 
-        // Auto-flush if we've reached the batch threshold:
-        if (this.pendingWrites.length >= this.BATCH_SIZE) {
-            await this.flushWrites();
-        }
-
-        console.log(
-            `Queued PUT for key "${key}" in "${storeName}", row ${rowMetadata.rowId}.`
-        );
+        // Reset the flush timer
+        this.resetFlushTimer();
     }
 
     /**
-         * Retrieves data for a given key from the GPU buffer based on CPU metadata.
-         * If the key does not exist or is inactive, it returns null.
-         *
-         * @param {string} storeName - The name of the object store.
-         * @param {string} key - The unique identifier for the data.
-         * @returns {Promise<any | null>} A promise resolving to the deserialized data (object, typed array, or raw bytes),
-         * or null if not found or flagged inactive.
-         */
+     * Retrieves data for a specific key from the GPU-backed store.
+     * Ensures all pending writes are flushed before reading.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row.
+     * @returns {Promise<any | null>} A promise that resolves with the retrieved data or null if not found.
+     * @throws {Error} If the store does not exist.
+     */
     public async get(storeName: string, key: string): Promise<any | null> {
+        // Ensure all pending writes are flushed before reading
+        await this.flushWrites();
+
         const storeMeta = this.getStoreMetadata(storeName);
+        const keyMap = this.getKeyMap(storeName);
+        const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
 
-        // Explicit check instead of "!"
-        const keyMap = this.storeKeyMap.get(storeName);
-        if (!keyMap) {
-            console.warn(`No keyMap found for store "${storeName}".`);
-            return null;
-        }
-
-        // 1. Lookup row metadata or return null if not found/inactive
-        const rowMetadata = this.getRowMetadataForKey(storeMeta, keyMap, key);
         if (!rowMetadata) {
+            console.log(`Key "${key}" not found or inactive in store "${storeName}".`);
             return null;
         }
 
-        // 2. Read GPU data into a CPU-based Uint8Array
-        const copiedData = await this.readDataFromGPU(storeMeta, rowMetadata);
-
-        // 3. Deserialize the bytes into the correct data type
-        return this.deserializeData(storeMeta, copiedData);
+        const data = await this.readDataFromGPU(storeMeta, rowMetadata);
+        return this.deserializeData(storeMeta, data);
     }
 
     /**
@@ -390,12 +373,8 @@ export class VideoDB {
             key // Include the key for metadata updates during flush
         });
 
-        // 5. Check if the pendingWrites has reached the batch threshold
-        if (this.pendingWrites.length >= this.BATCH_SIZE) {
-            await this.flushWrites();
-        }
-
-        console.log(`Queued DELETE for key "${key}" in object store "${storeName}".`);
+        // 5. Reset the flush timer
+        this.resetFlushTimer();
     }
 
     /**
@@ -590,10 +569,6 @@ export class VideoDB {
                             this.storeKeyMap.get(storeMeta.storeName)?.delete(key);
                         }
                     }
-
-                    console.debug(
-                        `Written rowId=${rowMetadata.rowId} to GPU buffer at offset=${rowMetadata.offset}.`
-                    );
                 }
 
                 // d. Unmap the buffer after all writes are completed.
@@ -1280,5 +1255,37 @@ export class VideoDB {
         }
 
         return arrayBuffer.byteLength; // new padded length
+    }
+
+    /**
+         * Resets the flush timer. If a timer is already set, it clears it and sets a new one.
+         * When the timer fires after 1 second of inactivity, `flushWrites` is called.
+         * 
+         * @private
+         */
+    private resetFlushTimer(): void {
+        // If a timer is already set, clear it
+        if (this.flushTimer !== null) {
+            clearTimeout(this.flushTimer);
+        }
+
+        // Set a new timer
+        this.flushTimer = window.setTimeout(() => {
+            this.flushWrites().catch(error => {
+                console.error('Error during timed flushWrites:', error);
+            });
+            this.flushTimer = null; // Reset the timer handle
+        }, 250); // 250 ms
+    }
+
+    /**
+     * Flushes any remaining pending writes before shutting down the application.
+     */
+    public async shutdown(): Promise<void> {
+        if (this.flushTimer !== null) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        await this.flushWrites();
     }
 }
