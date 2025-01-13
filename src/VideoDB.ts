@@ -130,7 +130,7 @@ export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
     public storeKeyMap: Map<string, Map<string, number>>;
     // The new properties that enable caching/batching:
-    private pendingWrites: PendingWrite[] = [];
+    public pendingWrites: PendingWrite[] = [];
     private readonly BATCH_SIZE = 2000; // e.g. auto-flush after 2000 writes
     private flushTimer: number | null = null;
 
@@ -265,6 +265,9 @@ export class VideoDB {
 
         // Reset the flush timer
         this.resetFlushTimer();
+
+        // Check if batch size threshold is met
+        await this.checkAndFlush();
     }
 
     /**
@@ -309,6 +312,9 @@ export class VideoDB {
 
         // Reset the flush timer
         this.resetFlushTimer();
+
+        // Check if batch size threshold is met
+        await this.checkAndFlush();
     }
 
     /**
@@ -375,6 +381,9 @@ export class VideoDB {
 
         // 5. Reset the flush timer
         this.resetFlushTimer();
+
+        // 6. Check if batch size threshold is met
+        await this.checkAndFlush();
     }
 
     /**
@@ -500,6 +509,17 @@ export class VideoDB {
         }
     }
 
+    private async checkAndFlush(): Promise<void> {
+        if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            if (this.flushTimer !== null) {
+                clearTimeout(this.flushTimer);
+                this.flushTimer = null;
+            }
+            // Await the flush here
+            await this.flushWrites();
+        }
+    }
+
     /**
      * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched and optimized manner.
      * 
@@ -520,70 +540,53 @@ export class VideoDB {
             return;
         }
 
-        console.info(`Flushing ${this.pendingWrites.length} writes to GPU...`);
-
-        // 1. Group pendingWrites by their target GPU buffer.
+        // 1. Group by GPU buffer
         const writesByBuffer: Map<GPUBuffer, PendingWrite[]> = new Map();
-
         for (const item of this.pendingWrites) {
             const { gpuBuffer } = item;
-
             if (!writesByBuffer.has(gpuBuffer)) {
                 writesByBuffer.set(gpuBuffer, []);
             }
-
             writesByBuffer.get(gpuBuffer)!.push(item);
         }
 
-        // 2. Iterate over each GPU buffer group and process writes.
-        for (const [gpuBuffer, writes] of writesByBuffer.entries()) {
-            if (writes.length === 0) continue; // Safety check.
+        // 2. We'll track which writes succeeded
+        const successfulWrites = new Set<PendingWrite>();
 
-            // a. Sort writes by their byte offsets within the buffer (ascending order).
-            writes.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
+        // 3. For each GPU buffer, attempt to write
+        for (const [gpuBuffer, writeGroup] of writesByBuffer.entries()) {
+            // Sort the group by offset
+            writeGroup.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
 
             try {
-                // b. Map the GPU buffer once for all writes.
+                // Map once
                 await gpuBuffer.mapAsync(GPUMapMode.WRITE);
                 const mappedRange = gpuBuffer.getMappedRange();
                 const mappedView = new Uint8Array(mappedRange);
 
-                // c. Write each row's data into the mapped buffer at the specified offset.
-                for (const write of writes) {
-                    const { rowMetadata, arrayBuffer, storeMeta, operationType, key } = write;
-
-                    // Ensure alignment (assuming already handled during serialization).
-                    mappedView.set(new Uint8Array(arrayBuffer), rowMetadata.offset);
-
-                    // Update row metadata.
-                    rowMetadata.length = arrayBuffer.byteLength;
-                    storeMeta.dirtyMetadata = true;
-                    storeMeta.metadataVersion += 1;
-
-                    if (operationType === 'delete') {
-                        // Mark the row as inactive
-                        this.markRowInactive(rowMetadata);
-
-                        // Remove the key from the keyMap
-                        if (key) {
-                            this.storeKeyMap.get(storeMeta.storeName)?.delete(key);
-                        }
+                // For each write
+                for (const pendingWrite of writeGroup) {
+                    try {
+                        const { rowMetadata, arrayBuffer } = pendingWrite;
+                        mappedView.set(new Uint8Array(arrayBuffer), rowMetadata.offset);
+                        // If no error, mark as successful
+                        successfulWrites.add(pendingWrite);
+                    } catch (singleWriteError) {
+                        // Possibly keep it for retry or log it
+                        console.error('Error writing single item:', singleWriteError);
                     }
                 }
 
-                // d. Unmap the buffer after all writes are completed.
+                // Unmap
                 gpuBuffer.unmap();
-
-                console.info(`Successfully flushed writes to GPU buffer.`);
-            } catch (error) {
-                console.error(`Error flushing writes to GPU buffer:`, error);
-                // Optionally, implement retry logic or error handling here.
+            } catch (mapError) {
+                // If we can’t even map, everything in this group fails
+                console.error('Error mapping GPU buffer:', mapError);
             }
         }
 
-        // 3. Clear the pendingWrites array after all writes have been processed.
-        this.pendingWrites = [];
-        console.info(`All pending writes have been flushed to GPU.`);
+        // 4. Remove successful writes from pendingWrites
+        this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
     }
 
     /**
@@ -1276,16 +1279,5 @@ export class VideoDB {
             });
             this.flushTimer = null; // Reset the timer handle
         }, 250); // 250 ms
-    }
-
-    /**
-     * Flushes any remaining pending writes before shutting down the application.
-     */
-    public async shutdown(): Promise<void> {
-        if (this.flushTimer !== null) {
-            clearTimeout(this.flushTimer);
-            this.flushTimer = null;
-        }
-        await this.flushWrites();
     }
 }
