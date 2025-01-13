@@ -833,6 +833,11 @@ videoDB.clear("reallyFakeStore");<br />
 
             logToConsole("[TASK] Stress Test: Measuring add, put, and delete performance for multiple store types.");
 
+            logToConsole("");
+            logToConsole("[NOTE] May freeze your main thread for the duration of the stress test.")
+            logToConsole("[NOTE] Each row is 1kb in size.")
+            logToConsole("");
+
             // Show code snippet in the right panel
             logCommandToConsole(`
 <code>
@@ -954,7 +959,7 @@ videoDB.clear("reallyFakeStore");<br />
          */
         function fiveSecondCountdown() {
             return new Promise((resolve) => {
-                logToConsole("[STEP] Starting 5-second countdown...  NOTE - May freeze your main thread for the duration of the stress test.");
+                logToConsole("[STEP] Starting 5-second countdown...");
                 let remaining = 5;
                 const timer = setInterval(() => {
                     logToConsole(`[INFO] Countdown: ${remaining}s`);
