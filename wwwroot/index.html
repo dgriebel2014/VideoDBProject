@@ -825,6 +825,7 @@ videoDB.clear("reallyFakeStore");<br />
          *    - Run delete performance for 5s.
          *    - Delete the store.
          * 3) Output records/sec for each operation.
+         * 4) Display the total size of all data moved from CPU to GPU.
          */
         async function stressTest() {
             // Clear console & code pane
@@ -835,7 +836,7 @@ videoDB.clear("reallyFakeStore");<br />
 
             logToConsole("");
             logToConsole("[NOTE] May freeze your main thread for the duration of the stress test.");
-            logToConsole("[NOTE] Each row is 1kb in size.");
+            logToConsole("[NOTE] Each row is approximately 1KB in size.");
             logToConsole("");
 
             // Show code snippet in the right panel
@@ -850,6 +851,7 @@ videoDB.clear("reallyFakeStore");<br />
 //    - Run delete performance for 5s.<br />
 //    - Delete the store.<br />
 // 3. Output records/sec for each operation.<br />
+// 4. Display total data transferred.<br />
 </code>
     `);
 
@@ -912,6 +914,11 @@ videoDB.clear("reallyFakeStore");<br />
             // Array to collect results
             const perfResults = [];
 
+            // Accumulators for total operations
+            let totalAddOps = 0;
+            let totalPutOps = 0;
+            let totalDelOps = 0;
+
             // For each store type, run add/put/delete
             for (const cfg of storeConfigs) {
                 const { name, options } = cfg;
@@ -933,10 +940,18 @@ videoDB.clear("reallyFakeStore");<br />
 
                 // 5s add
                 const addRate = await runPerfPhase(name, "add", dataObj, 5000);
+                const addOps = Math.floor(addRate * 5); // Approximate total adds
+                totalAddOps += addOps;
+
                 // 5s put
                 const putRate = await runPerfPhase(name, "put", dataObj, 5000);
+                const putOps = Math.floor(putRate * 5); // Approximate total puts
+                totalPutOps += putOps;
+
                 // 5s delete
                 const delRate = await runDeletePhase(name, 5000);
+                const delOps = Math.floor(delRate * 5); // Approximate total deletes
+                totalDelOps += delOps;
 
                 perfResults.push({ store: name, addRate, putRate, delRate });
 
@@ -945,12 +960,25 @@ videoDB.clear("reallyFakeStore");<br />
                 logToConsole(`[SUCCESS] Deleted store '${name}' after test.`);
             }
 
+            // Calculate total data transferred (excluding DELETE operations)
+            const totalDataKB = (totalAddOps + totalPutOps) * 1; // 1KB per ADD/PUT operation
+
+            let totalDataStr = "";
+            if (totalDataKB >= 1024 * 1024) { // 1GB = 1,048,576 KB
+                const totalDataGB = (totalDataKB / (1024 * 1024)).toFixed(2);
+                totalDataStr = `${totalDataGB} GB`;
+            } else {
+                const totalDataMB = (totalDataKB / 1024).toFixed(2);
+                totalDataStr = `${totalDataMB} MB`;
+            }
+
             // Summarize results
             logToConsole("[RESULTS] Stress Test Performance:");
             for (const r of perfResults) {
                 logToConsole(`   ${r.store}: ADD=${r.addRate} rec/sec, PUT=${r.putRate} rec/sec, DEL=${r.delRate} rec/sec`);
             }
 
+            logToConsole(`[RESULTS] Total Data Transferred (ADD/PUT/DELETE): ${totalDataStr}`);
             logToConsole("[INFO] Stress Test completed.");
         }
 
