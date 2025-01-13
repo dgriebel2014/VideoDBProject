@@ -946,7 +946,7 @@ videoDB.clear("reallyFakeStore");<br />
                 logToConsole(`   ${r.store}: ADD=${r.addRate} rec/sec, PUT=${r.putRate} rec/sec, DEL=${r.delRate} rec/sec`);
             }
 
-            logToConsole("[INFO] Stress Test completed.");
+            logToConsole("[INFO] Stress Test completed.  I could have carved those messages in stone and had a greek herald deliver them faster, but it's finally finished.  The problem?  1 GPU write for every record in the main thread.");
         }
 
         /**
