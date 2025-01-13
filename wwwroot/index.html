@@ -931,7 +931,7 @@ videoDB.clear("reallyFakeStore");<br />
                 // 5s put
                 const putRate = await runPerfPhase(name, "put", dataObj, 5000);
                 // 5s delete
-                const delRate = await runDeletePhase(name, 1000);
+                const delRate = await runDeletePhase(name, 5000);
 
                 perfResults.push({ store: name, addRate, putRate, delRate });
 

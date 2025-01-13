@@ -102,7 +102,7 @@ export class VideoDB {
     storeKeyMap;
     // The new properties that enable caching/batching:
     pendingWrites = [];
-    BATCH_SIZE = 1000; // e.g. auto-flush after 1000 writes
+    BATCH_SIZE = 2000; // e.g. auto-flush after 2000 writes
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -137,6 +137,7 @@ export class VideoDB {
             rowsPerBuffer = Math.floor(options.bufferSize / options.rowSize);
         }
         const storeMetadata = {
+            storeName, // Assign storeName here
             dataType: options.dataType,
             typedArrayType: options.typedArrayType,
             bufferSize: options.bufferSize,
@@ -177,7 +178,7 @@ export class VideoDB {
     /**
      * Adds a new record to the specified store without immediately writing to the GPU.
      * Instead, it caches the data in a pending-writes array. Once the pending array
-     * reaches 1000 entries, this method triggers a flush to the GPU.
+     * reaches the batch threshold, this method triggers a flush to the GPU.
      *
      * @param {string} storeName - The name of the object store.
      * @param {string} key - The unique key identifying the row.
@@ -196,24 +197,30 @@ export class VideoDB {
         const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "add");
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
         // Queue up the write instead of writing immediately to GPU:
-        this.pendingWrites.push({ storeMeta, rowMetadata, arrayBuffer, gpuBuffer });
+        this.pendingWrites.push({
+            storeMeta,
+            rowMetadata,
+            arrayBuffer,
+            gpuBuffer,
+            operationType: 'add'
+        });
         // Auto-flush if we've reached the batch threshold:
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
             await this.flushWrites();
         }
-        console.log(`Data added for key "${key}" in "${storeName}", row ${rowMetadata.rowId} (pending write).`);
+        console.log(`Queued ADD for key "${key}" in "${storeName}", row ${rowMetadata.rowId}.`);
     }
     /**
-     * Stores or updates data in the specified store without immediately writing to the GPU.
-     * Instead, it caches the data in a pending-writes array. Once the pending array
-     * reaches 1000 entries, this method triggers a flush to the GPU.
-     *
-     * @param {string} storeName - The name of the object store.
-     * @param {string} key - The unique key identifying the row.
-     * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
-     * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
-     * @throws {Error} If the store does not exist.
-     */
+    * Stores or updates data in the specified store without immediately writing to the GPU.
+    * Instead, it caches the data in a pending-writes array. Once the pending array
+    * reaches the batch threshold, this method triggers a flush to the GPU.
+    *
+    * @param {string} storeName - The name of the object store.
+    * @param {string} key - The unique key identifying the row.
+    * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
+    * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
+    * @throws {Error} If the store does not exist.
+    */
     async put(storeName, key, value) {
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
@@ -225,12 +232,18 @@ export class VideoDB {
         const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "put");
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
         // Queue up the write instead of writing immediately to GPU:
-        this.pendingWrites.push({ storeMeta, rowMetadata, arrayBuffer, gpuBuffer });
+        this.pendingWrites.push({
+            storeMeta,
+            rowMetadata,
+            arrayBuffer,
+            gpuBuffer,
+            operationType: 'put'
+        });
         // Auto-flush if we've reached the batch threshold:
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
             await this.flushWrites();
         }
-        console.log(`Data stored (put) for key "${key}" in "${storeName}", row ${rowMetadata.rowId} (pending write).`);
+        console.log(`Queued PUT for key "${key}" in "${storeName}", row ${rowMetadata.rowId}.`);
     }
     /**
          * Retrieves data for a given key from the GPU buffer based on CPU metadata.
@@ -260,13 +273,16 @@ export class VideoDB {
         return this.deserializeData(storeMeta, copiedData);
     }
     /**
-     * Deletes data for a specific key from the GPU-backed store.
-     * @param storeName - The name of the object store.
-     * @param key - The unique key identifying the row to delete.
-     * @returns A promise that resolves once the data is marked inactive (and optionally zeroed out).
+     * Deletes data for a specific key from the GPU-backed store by batching the delete operation.
+     * The actual GPU write and metadata update are deferred until `flushWrites` is called.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row to delete.
+     * @returns {Promise<void>} A promise that resolves once the delete operation is queued.
+     * @throws {Error} If the store does not exist.
      */
     async delete(storeName, key) {
-        // 1. Get store metadata & keyMap
+        // 1. Retrieve store metadata and key map
         const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
         // 2. Find row metadata for the active row
@@ -275,14 +291,24 @@ export class VideoDB {
             console.log(`Key "${key}" not found or already inactive in store "${storeName}".`);
             return;
         }
-        // 3. Wipe the GPU data (optional, but recommended for "true" deletion)
-        await this.wipeRowDataInGPU(storeMeta, rowMetadata);
-        // 4. Mark row as inactive and remove it from the keyMap
-        this.markRowInactive(rowMetadata);
-        keyMap.delete(key);
-        // 5. Update store metadata to reflect the change
-        this.updateStoreMetadata(storeMeta);
-        console.log(`Deleted data for key "${key}" in object store "${storeName}".`);
+        // 3. Create a zeroed ArrayBuffer to overwrite the row data (optional)
+        const zeroedArrayBuffer = new ArrayBuffer(rowMetadata.length);
+        const zeroedView = new Uint8Array(zeroedArrayBuffer);
+        zeroedView.fill(0); // Optional: Fill with zeros for "true" deletion
+        // 4. Queue the delete operation as a pending write
+        this.pendingWrites.push({
+            storeMeta,
+            rowMetadata,
+            arrayBuffer: zeroedArrayBuffer,
+            gpuBuffer: this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex),
+            operationType: 'delete',
+            key // Include the key for metadata updates during flush
+        });
+        // 5. Check if the pendingWrites has reached the batch threshold
+        if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            await this.flushWrites();
+        }
+        console.log(`Queued DELETE for key "${key}" in object store "${storeName}".`);
     }
     /**
      * Removes all rows from the specified object store, destroys all GPU buffers,
@@ -383,7 +409,7 @@ export class VideoDB {
         }
     }
     /**
-     * Flushes all pending writes to the GPU in a batched and optimized manner.
+     * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched and optimized manner.
      *
      * This method performs the following steps:
      * 1. Groups all pending writes by their target GPU buffer.
@@ -405,11 +431,11 @@ export class VideoDB {
         // 1. Group pendingWrites by their target GPU buffer.
         const writesByBuffer = new Map();
         for (const item of this.pendingWrites) {
-            const { gpuBuffer, rowMetadata, arrayBuffer, storeMeta } = item;
+            const { gpuBuffer } = item;
             if (!writesByBuffer.has(gpuBuffer)) {
                 writesByBuffer.set(gpuBuffer, []);
             }
-            writesByBuffer.get(gpuBuffer).push({ rowMetadata, arrayBuffer, storeMeta });
+            writesByBuffer.get(gpuBuffer).push(item);
         }
         // 2. Iterate over each GPU buffer group and process writes.
         for (const [gpuBuffer, writes] of writesByBuffer.entries()) {
@@ -424,13 +450,21 @@ export class VideoDB {
                 const mappedView = new Uint8Array(mappedRange);
                 // c. Write each row's data into the mapped buffer at the specified offset.
                 for (const write of writes) {
-                    const { rowMetadata, arrayBuffer, storeMeta } = write;
+                    const { rowMetadata, arrayBuffer, storeMeta, operationType, key } = write;
                     // Ensure alignment (assuming already handled during serialization).
                     mappedView.set(new Uint8Array(arrayBuffer), rowMetadata.offset);
                     // Update row metadata.
                     rowMetadata.length = arrayBuffer.byteLength;
                     storeMeta.dirtyMetadata = true;
                     storeMeta.metadataVersion += 1;
+                    if (operationType === 'delete') {
+                        // Mark the row as inactive
+                        this.markRowInactive(rowMetadata);
+                        // Remove the key from the keyMap
+                        if (key) {
+                            this.storeKeyMap.get(storeMeta.storeName)?.delete(key);
+                        }
+                    }
                     console.debug(`Written rowId=${rowMetadata.rowId} to GPU buffer at offset=${rowMetadata.offset}.`);
                 }
                 // d. Unmap the buffer after all writes are completed.
@@ -439,7 +473,7 @@ export class VideoDB {
             }
             catch (error) {
                 console.error(`Error flushing writes to GPU buffer:`, error);
-                // Optionally, handle specific errors or retry logic here.
+                // Optionally, implement retry logic or error handling here.
             }
         }
         // 3. Clear the pendingWrites array after all writes have been processed.
@@ -511,23 +545,21 @@ export class VideoDB {
         return 0;
     }
     /**
-     * Finds a row’s metadata for the given key if it is active (not flagged as inactive).
-     *
-     * @param {Map<string, number>} keyMap - The mapping of keys to row IDs for this store.
-     * @param {string} key - The unique key identifying the row to look up.
-     * @param {RowMetadata[]} rows - The array of RowMetadata objects for the store.
-     * @returns {RowMetadata | null} The row’s metadata if found and active, or `null` otherwise.
-     */
+         * Finds the active row metadata for a given key.
+         * @param keyMap - The key map for the store.
+         * @param key - The key to search for.
+         * @param rows - The array of row metadata.
+         * @returns The active RowMetadata or null if not found/inactive.
+         */
     findActiveRowMetadata(keyMap, key, rows) {
         const rowId = keyMap.get(key);
         if (rowId == null) {
-            return null; // Key not found
+            return null;
         }
         const rowMetadata = rows.find((r) => r.rowId === rowId);
         if (!rowMetadata) {
-            return null; // Row metadata missing
+            return null;
         }
-        // Check if the row is flagged inactive
         if ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
             return null;
         }
