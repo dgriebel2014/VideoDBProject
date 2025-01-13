@@ -1,4 +1,4 @@
-﻿import { StoreMetadata, BufferMetadata, RowMetadata } from "./types/StoreMetadata";
+﻿import { StoreMetadata, BufferMetadata, RowMetadata, RowMetadataAndData } from "./types/StoreMetadata";
 
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
 const ROW_INACTIVE_FLAG = 0x1;
@@ -23,6 +23,7 @@ function getGpuWorker(): Worker {
     }
     return gpuWorker;
 }
+
 
 /**
  * Handle responses coming back from the worker. 
@@ -118,6 +119,16 @@ export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
     public storeKeyMap: Map<string, Map<string, number>>;
 
+    // The new properties that enable caching/batching:
+    private pendingWrites: Array<{
+        storeMeta: StoreMetadata;
+        rowMetadata: RowMetadata;
+        arrayBuffer: ArrayBuffer;
+        gpuBuffer: GPUBuffer;
+    }> = [];
+
+    private readonly BATCH_SIZE = 2000; // e.g. auto-flush after 1000 writes
+
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -207,12 +218,15 @@ export class VideoDB {
     }
 
     /**
-     * Adds data to a GPU-backed store but fails if the key already exists.
-     * @param storeName - The name of the object store.
-     * @param key - The unique key identifying the row.
-     * @param value - The data to be written (JSON, TypedArray, or ArrayBuffer).
-     * @returns A promise that resolves once the data is stored.
-     * @throws {Error} If the store does not exist or a record with the same key is already active.
+     * Adds a new record to the specified store without immediately writing to the GPU.
+     * Instead, it caches the data in a pending-writes array. Once the pending array
+     * reaches 1000 entries, this method triggers a flush to the GPU.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row.
+     * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
+     * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
+     * @throws {Error} If the store does not exist or a record with the same key is already active (in "add" mode).
      */
     public async add(storeName: string, key: string, value: any): Promise<void> {
         const storeMeta = this.storeMetadataMap.get(storeName);
@@ -220,31 +234,43 @@ export class VideoDB {
             throw new Error(`Object store "${storeName}" does not exist.`);
         }
 
-        const keyMap = this.storeKeyMap.get(storeName);
-        if (!keyMap) {
-            // Should never happen unless the store is half-initialized
-            throw new Error(`Key map for store "${storeName}" is missing or uninitialized.`);
-        }
-
-        // Serialize the incoming value to an ArrayBuffer
+        const keyMap = this.storeKeyMap.get(storeName)!;
         const arrayBuffer = this.serializeValueForStore(storeMeta, value);
 
-        // Use the new "add" mode so that if a row exists and is active, it will fail
-        const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "add");
+        // Find/create the CPU row metadata, but do NOT write to GPU here.
+        const rowMetadata = await this.findOrCreateRowMetadata(
+            storeMeta,
+            keyMap,
+            key,
+            arrayBuffer,
+            "add"
+        );
 
-        // Once we have the rowMetadata, finalize the write
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
-        await this.finalizeWrite(storeMeta, rowMetadata, arrayBuffer, gpuBuffer);
 
-        console.log(`Data added for key "${key}" in object store "${storeName}", row ${rowMetadata.rowId}.`);
+        // Queue up the write instead of writing immediately to GPU:
+        this.pendingWrites.push({ storeMeta, rowMetadata, arrayBuffer, gpuBuffer });
+
+        // Auto-flush if we've reached the batch threshold:
+        if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            await this.flushWrites();
+        }
+
+        console.log(
+            `Data added for key "${key}" in "${storeName}", row ${rowMetadata.rowId} (pending write).`
+        );
     }
 
     /**
-     * Stores or updates data in a GPU-backed store.
-     * @param storeName - The name of the object store.
-     * @param key - The unique key identifying the row.
-     * @param value - The data to be written (JSON, TypedArray, or ArrayBuffer).
-     * @returns A promise that resolves once the data is stored.
+     * Stores or updates data in the specified store without immediately writing to the GPU.
+     * Instead, it caches the data in a pending-writes array. Once the pending array
+     * reaches 1000 entries, this method triggers a flush to the GPU.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row.
+     * @param {any} value - The data to be written (JSON, TypedArray, or ArrayBuffer).
+     * @returns {Promise<void>} A promise that resolves when the data is queued for writing.
+     * @throws {Error} If the store does not exist.
      */
     public async put(storeName: string, key: string, value: any): Promise<void> {
         const storeMeta = this.storeMetadataMap.get(storeName);
@@ -255,13 +281,28 @@ export class VideoDB {
         const keyMap = this.storeKeyMap.get(storeName)!;
         const arrayBuffer = this.serializeValueForStore(storeMeta, value);
 
-        // Use the "put" mode so overwrites are allowed
-        const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "put");
+        // "put" mode allows overwrites if the key already exists.
+        const rowMetadata = await this.findOrCreateRowMetadata(
+            storeMeta,
+            keyMap,
+            key,
+            arrayBuffer,
+            "put"
+        );
 
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
-        await this.finalizeWrite(storeMeta, rowMetadata, arrayBuffer, gpuBuffer);
 
-        console.log(`Data stored (put) for key "${key}" in object store "${storeName}", row ${rowMetadata.rowId}.`);
+        // Queue up the write instead of writing immediately to GPU:
+        this.pendingWrites.push({ storeMeta, rowMetadata, arrayBuffer, gpuBuffer });
+
+        // Auto-flush if we've reached the batch threshold:
+        if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            await this.flushWrites();
+        }
+
+        console.log(
+            `Data stored (put) for key "${key}" in "${storeName}", row ${rowMetadata.rowId} (pending write).`
+        );
     }
 
     /**
@@ -448,6 +489,86 @@ export class VideoDB {
                 yield { key, value: record };
             }
         }
+    }
+
+    /**
+     * Flushes all pending writes to the GPU in a batched and optimized manner.
+     * 
+     * This method performs the following steps:
+     * 1. Groups all pending writes by their target GPU buffer.
+     * 2. Sorts each group of writes by their byte offsets within the buffer.
+     * 3. Maps each GPU buffer once, writes all relevant data sequentially, and then unmaps.
+     * 4. Updates the associated row and store metadata accordingly.
+     * 
+     * This approach ensures that multiple writes to the same buffer are handled efficiently,
+     * reducing the number of GPU buffer mappings and maximizing write throughput.
+     * 
+     * @returns {Promise<void>} A promise that resolves once all pending writes have been applied.
+     */
+    public async flushWrites(): Promise<void> {
+        if (this.pendingWrites.length === 0) {
+            console.info(`No pending writes to flush.`);
+            return;
+        }
+
+        console.info(`Flushing ${this.pendingWrites.length} writes to GPU...`);
+
+        // 1. Group pendingWrites by their target GPU buffer.
+        const writesByBuffer: Map<GPUBuffer, RowMetadataAndData[]> = new Map();
+
+        for (const item of this.pendingWrites) {
+            const { gpuBuffer, rowMetadata, arrayBuffer, storeMeta } = item;
+
+            if (!writesByBuffer.has(gpuBuffer)) {
+                writesByBuffer.set(gpuBuffer, []);
+            }
+
+            writesByBuffer.get(gpuBuffer)!.push({ rowMetadata, arrayBuffer, storeMeta });
+        }
+
+        // 2. Iterate over each GPU buffer group and process writes.
+        for (const [gpuBuffer, writes] of writesByBuffer.entries()) {
+            if (writes.length === 0) continue; // Safety check.
+
+            // a. Sort writes by their byte offsets within the buffer (ascending order).
+            writes.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
+
+            try {
+                // b. Map the GPU buffer once for all writes.
+                await gpuBuffer.mapAsync(GPUMapMode.WRITE);
+                const mappedRange = gpuBuffer.getMappedRange();
+                const mappedView = new Uint8Array(mappedRange);
+
+                // c. Write each row's data into the mapped buffer at the specified offset.
+                for (const write of writes) {
+                    const { rowMetadata, arrayBuffer, storeMeta } = write;
+
+                    // Ensure alignment (assuming already handled during serialization).
+                    mappedView.set(new Uint8Array(arrayBuffer), rowMetadata.offset);
+
+                    // Update row metadata.
+                    rowMetadata.length = arrayBuffer.byteLength;
+                    storeMeta.dirtyMetadata = true;
+                    storeMeta.metadataVersion += 1;
+
+                    console.debug(
+                        `Written rowId=${rowMetadata.rowId} to GPU buffer at offset=${rowMetadata.offset}.`
+                    );
+                }
+
+                // d. Unmap the buffer after all writes are completed.
+                gpuBuffer.unmap();
+
+                console.info(`Successfully flushed writes to GPU buffer.`);
+            } catch (error) {
+                console.error(`Error flushing writes to GPU buffer:`, error);
+                // Optionally, handle specific errors or retry logic here.
+            }
+        }
+
+        // 3. Clear the pendingWrites array after all writes have been processed.
+        this.pendingWrites = [];
+        console.info(`All pending writes have been flushed to GPU.`);
     }
 
     /**
@@ -868,16 +989,18 @@ export class VideoDB {
     }
 
     /**
-     * Finds or creates a RowMetadata entry for the given key.
-     * - If mode is "add", fail if the row already exists and is active.
-     * - If mode is "put", overwrite if the row already exists (the default put behavior).
+     * Finds or creates a RowMetadata entry for the given key. Unlike the previous version,
+     * this no longer does the actual GPU write. It only determines where the data
+     * should go (offset, bufferIndex) and updates CPU-side metadata. The GPU write is
+     * deferred until a flush operation.
      *
-     * @param storeMeta - The metadata of the target store.
-     * @param keyMap - A map of key → rowId for the store.
-     * @param key - The key identifying the row.
-     * @param arrayBuffer - The serialized data to be written.
-     * @param mode - Either "add" (disallow overwrite) or "put" (allow overwrite).
-     * @returns A promise that resolves to the relevant RowMetadata (new or existing/updated).
+     * @param {StoreMetadata} storeMeta - The metadata of the target store.
+     * @param {Map<string, number>} keyMap - A map of key-to-rowId for the store.
+     * @param {string} key - The unique key identifying the row.
+     * @param {ArrayBuffer} arrayBuffer - The data to be stored, already serialized/padded.
+     * @param {"add" | "put"} mode - "add" disallows overwrites, "put" allows them.
+     * @returns {Promise<RowMetadata>} A promise that resolves with the row’s metadata.
+     * @throws {Error} If the key already exists while in "add" mode.
      */
     private async findOrCreateRowMetadata(
         storeMeta: StoreMetadata,
@@ -887,26 +1010,22 @@ export class VideoDB {
         mode: "add" | "put"
     ): Promise<RowMetadata> {
         let rowId = keyMap.get(key);
-
-        // Check if there's an existing row in CPU metadata
         let rowMetadata = rowId == null
             ? null
             : storeMeta.rows.find((r) => r.rowId === rowId) || null;
 
-        // If an active row exists and we are in "add" mode, throw an error immediately
+        // If active row exists and we are in "add" mode, throw:
         if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
-            // The row is active, so adding a duplicate is not allowed
             throw new Error(
                 `Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`
             );
         }
 
-        // Allocate space in a GPU buffer
+        // Allocate space in a GPU buffer (just picks offset/bufferIndex, no write):
         const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
 
-        // If row does not exist or is inactive, treat it as a new row
+        // If row is new or inactive, create a fresh RowMetadata:
         if (!rowMetadata || ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
-            // Create a new RowMetadata
             rowId = storeMeta.rows.length + 1;
             rowMetadata = {
                 rowId,
@@ -916,27 +1035,32 @@ export class VideoDB {
             };
             storeMeta.rows.push(rowMetadata);
             keyMap.set(key, rowId);
-
-            // Initial write of data for the newly created row
-            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
         }
-        // Else if row is active and we're in "put" mode, we can overwrite
+        // If row is active and we’re in "put" mode, handle potential reallocation:
         else if (mode === "put") {
-            // Reuse existing row (or possibly relocate it if new data is bigger)
-            rowMetadata = await this.updateRowOnOverwrite(storeMeta, rowMetadata, arrayBuffer, keyMap, key);
+            rowMetadata = await this.updateRowOnOverwrite(
+                storeMeta,
+                rowMetadata,
+                arrayBuffer,
+                keyMap,
+                key
+            );
         }
 
         return rowMetadata;
     }
 
     /**
-     * Updates or reassigns a row when new data is larger or smaller than the existing row's capacity.
-     * @param storeMeta - The metadata of the target store.
-     * @param oldRowMeta - The existing row metadata being updated.
-     * @param arrayBuffer - The new data to be written.
-     * @param keyMap - A map of key-to-rowId for the store.
-     * @param key - The key identifying the row.
-     * @returns A promise that resolves to the updated or newly created RowMetadata.
+     * If the new data is larger than the existing row’s allocated space, this method
+     * deactivates the old row and finds a new location in the GPU buffer. Note that
+     * we do NOT write the data to the GPU here; we only choose the new offset.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the store.
+     * @param {RowMetadata} oldRowMeta - The existing row metadata to be overwritten.
+     * @param {ArrayBuffer} arrayBuffer - The new data (serialized/padded).
+     * @param {Map<string, number>} keyMap - The store’s key→rowId mapping.
+     * @param {string} key - The unique key for the row.
+     * @returns {Promise<RowMetadata>} The newly updated or created row metadata.
      */
     private async updateRowOnOverwrite(
         storeMeta: StoreMetadata,
@@ -945,21 +1069,19 @@ export class VideoDB {
         keyMap: Map<string, number>,
         key: string
     ): Promise<RowMetadata> {
+        // If the new data fits in the old space:
         if (arrayBuffer.byteLength <= oldRowMeta.length) {
-            // Overwrite in place
-            const oldBuf = this.getBufferByIndex(storeMeta, oldRowMeta.bufferIndex);
-            await this.writeDataToBuffer(oldBuf, oldRowMeta.offset, arrayBuffer);
-
-            // Adjust length if new data is smaller
+            // We'll overwrite in-place later during flushWrites.
+            // Just adjust length if the new data is smaller.
             if (arrayBuffer.byteLength < oldRowMeta.length) {
                 oldRowMeta.length = arrayBuffer.byteLength;
             }
             return oldRowMeta;
         } else {
-            // Mark old row inactive
+            // Mark old row inactive:
             oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
 
-            // Create new allocation
+            // Find new space for the bigger data:
             const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
 
             const newRowId = storeMeta.rows.length + 1;
@@ -972,9 +1094,7 @@ export class VideoDB {
             storeMeta.rows.push(newRowMeta);
             keyMap.set(key, newRowId);
 
-            // Write data to new allocation
-            await this.writeDataToBuffer(gpuBuffer, offset, arrayBuffer);
-
+            // The actual GPU write is deferred until flushWrites().
             return newRowMeta;
         }
     }

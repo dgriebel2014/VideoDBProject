@@ -32,3 +32,8 @@ export interface RowMetadata {
     length: number;
     flags?: number;
 }
+export interface RowMetadataAndData {
+    rowMetadata: RowMetadata;
+    arrayBuffer: ArrayBuffer;
+    storeMeta: StoreMetadata;
+}
