@@ -196,8 +196,6 @@ export class VideoDB {
 
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
-
-        console.log(`Created object store: ${storeName}`);
     }
 
     /**
@@ -212,7 +210,6 @@ export class VideoDB {
         }
         this.storeMetadataMap.delete(storeName);
         this.storeKeyMap.delete(storeName);
-        console.log(`Deleted object store: ${storeName}`);
     }
 
     /**
