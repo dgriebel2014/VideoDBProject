@@ -40,25 +40,10 @@ function handleWorkerMessage(evt: MessageEvent) {
             // The worker has successfully written the batch
             const { storeName, rowCount } = msg.payload;
             console.log(`[gpuWorker] WRITE_DONE for store="${storeName}" rowCount=${rowCount}`);
-
-            // If we have a pending flush promise for this store, resolve it
-            //if (storeFlushResolvers.has(storeName)) {
-            //    storeFlushResolvers.get(storeName)!.resolve(msg.payload);
-            //    storeFlushResolvers.delete(storeName);
-            //}
-
             break;
         }
         case "ERROR": {
             console.error("[gpuWorker] Error:", msg.payload);
-
-            // If we have a pending flush promise for some store, reject it
-            // NOTE: in a real app, you might want a storeName in the error, etc.
-            //for (const [storeName, resolvers] of storeFlushResolvers.entries()) {
-            //    resolvers.reject(msg.payload);
-            //    storeFlushResolvers.delete(storeName);
-            //}
-
             break;
         }
     }
