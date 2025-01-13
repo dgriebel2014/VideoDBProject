@@ -843,7 +843,6 @@ export class VideoDB {
             rowCount: 0,
             gpuBuffer
         });
-        console.log("Allocated first buffer chunk for store:", storeMeta);
 
         // Place data at offset 0
         (gpuBuffer as any)._usedBytes = size;
@@ -938,13 +937,6 @@ export class VideoDB {
             rowCount: 1,
             gpuBuffer: newGpuBuffer
         });
-
-        console.log(
-            "Allocated a new buffer chunk at index",
-            newBufferIndex,
-            "for store, usage size:",
-            size
-        );
 
         return {
             gpuBuffer: newGpuBuffer,
