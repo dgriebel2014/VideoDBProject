@@ -961,6 +961,7 @@ videoDB.clear("reallyFakeStore");<br />
                 // Delete store
                 videoDB.deleteObjectStore(name);
                 logToConsole(`[SUCCESS] Deleted store '${name}' after test.`);
+                logToConsole(``);
             }
 
             // Calculate total data transferred (excluding DELETE operations)
@@ -982,6 +983,7 @@ videoDB.clear("reallyFakeStore");<br />
             }
 
             logToConsole(`[RESULTS] Total Data Transferred (ADD/PUT/DELETE): ${totalDataStr}`);
+            logToConsole(``);
             logToConsole("[INFO] Stress Test completed.");
         }
 
