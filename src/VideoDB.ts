@@ -10,80 +10,6 @@ function roundUp(value: number, align: number): number {
     return Math.ceil(value / align) * align;
 }
 
-/** The Web Worker reference (lazy initialized) */
-let gpuWorker: Worker | null = null;
-
-/**
- * Retrieves the singleton instance of the GPU worker. Initializes the worker
- * if it has not been created yet.
- * 
- * @returns {Worker} The GPU worker instance.
- */
-function getGpuWorker(): Worker {
-    if (!gpuWorker) {
-        gpuWorker = new Worker(new URL("./gpuWorker.js", import.meta.url), {
-            type: "module",
-        });
-        gpuWorker.onmessage = handleWorkerMessage;
-        // Optionally, send an INIT_DEVICE message to the worker
-        gpuWorker.postMessage({ type: "INIT_DEVICE" });
-    }
-    return gpuWorker;
-}
-
-/**
- * Handle responses coming back from the worker. 
- */
-function handleWorkerMessage(evt: MessageEvent) {
-    const msg = evt.data;
-    if (!msg?.type) return;
-
-    switch (msg.type) {
-        case "DEVICE_READY": {
-            console.log("[gpuWorker] Device is ready in worker:", msg.payload);
-            break;
-        }
-        case "WRITE_DONE": {
-            // The worker has successfully written the batch
-            const { storeName, rowCount } = msg.payload;
-            console.log(`[gpuWorker] WRITE_DONE for store="${storeName}" rowCount=${rowCount}`);
-            break;
-        }
-        case "ERROR": {
-            console.error("[gpuWorker] Error:", msg.payload);
-            break;
-        }
-    }
-}
-
-/**
- * Sends a batch of data to the GPU worker for processing.
- * 
- * @param {string} storeName - The name of the store being written to.
- * @param {ArrayBuffer} dataToWrite - The data to be written to the GPU.
- * @param {number} rowCount - The number of rows included in the data batch.
- * @returns {Promise<void>} A promise that resolves when the operation is complete.
- */
-async function sendBatchToWorker(
-    storeName: string,
-    dataToWrite: ArrayBuffer,
-    rowCount: number
-): Promise<void> {
-    const worker = getGpuWorker();
-
-    // Create a new promise + store the resolve/reject
-    const promise = new Promise<void>((resolve, reject) => { });
-
-    // Post the data to the worker
-    worker.postMessage({
-        type: "WRITE_BATCH",
-        payload: { storeName, batch: dataToWrite, rowCount },
-    });
-
-    // Wait for the worker to confirm (WRITE_DONE) or error
-    await promise;
-}
-
 /**
  * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
  * @param jsonString - The original JSON string to pad.
@@ -789,6 +715,15 @@ export class VideoDB {
         }
     }
 
+    /**
+     * Checks whether the number of pending writes has reached the batch size threshold.
+     * If the threshold is met, it clears any existing flush timer and immediately flushes the pending writes to the GPU.
+     *
+     * This method is called after each write operation (`add`, `put`, `delete`) to ensure that writes are batched efficiently.
+     *
+     * @private
+     * @returns {Promise<void>} A promise that resolves once the flush operation (if triggered) completes.
+     */
     private async checkAndFlush(): Promise<void> {
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
             if (this.flushTimer !== null) {
