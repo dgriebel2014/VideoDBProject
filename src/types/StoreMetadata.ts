@@ -33,3 +33,22 @@ export interface RowMetadata {
     length: number;
     flags?: number;
 }
+
+export interface InitialMetrics {
+    flushWrites: number;
+    metadataRetrieval: number;
+}
+export interface MapBufferSubsections {
+    mapAsync: number;
+    getMappedRange: number;
+    copyToUint8Array: number;
+    unmap: number;
+}
+export interface PerKeyMetrics {
+    findMetadata: number;
+    createBuffer: number;
+    copyBuffer: number;
+    mapBuffer: number;
+    deserialize: number;
+    mapBufferSubsections: MapBufferSubsections;
+}
