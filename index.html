@@ -1677,24 +1677,36 @@ console.log("Retrieved vector length:", vector.length);
         <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
         <ul>
             <li><code>storeName</code> (<code>string</code>): The target store name.</li>
-            <li><code>keys</code> (<code>string[]</code>): The array of keys to read.</li>
+            <li><code>keys</code> (<code>string[]</code>): The array of keys or wildcard patterns to read.</li>
         </ul>
     </li>
     <li>
+        <br /><strong style="padding-bottom:5px; display:block;">SQL Wildcards</strong>
+        <p>This function supports SQL Server–style <code>LIKE</code> patterns in the <code>keys</code> array. If a key contains
+        wildcard characters, it expands to all matching keys in the store. Otherwise, the key is read as-is.</p>
+        <ul>
+            <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
+            <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
+            <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+            <li><code>[^abc]</code> matches any single character <em>not</em> in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+        </ul>
+        <p>Note that these patterns are anchored, so they must match the entire key string from start to finish.</p>
+    </li>
+    <li>
         <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-        <code>Promise&lt;(any|null)[]&gt;</code>: An array of deserialized data, matching the input key order.
+        <code>Promise&lt;(any|null)[]&gt;</code>: An array of deserialized data, matching the input key (or wildcard) order.
     </li>
     <li>
         <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
         <ul>
-            <li>Ensures all pending writes are flushed before reading (no stale data).</li>
+            <li>Ensures all pending writes are flushed before reading (to avoid stale data).</li>
             <li>Mirrors how the single <code>get()</code> function works internally.</li>
             <li>Efficiently reads multiple rows by using a staging buffer for each row.</li>
         </ul>
     </li>
     <li>
         <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>const results = await videoDB.getMultiple("embeddingStore", ["vector:001", "vector:002", "vector:010"]);
+        <pre><code>const results = await videoDB.getMultiple("embeddingStore", ["vector:001", "%:002", "[vV]ector:010"]);
 console.log(results[0], results[1], results[2]);
 </code></pre>
     </li>
