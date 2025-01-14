@@ -1,4 +1,7 @@
-﻿import { StoreMetadata, BufferMetadata, RowMetadata, InitialMetrics, MapBufferSubsections, PerKeyMetrics } from "./types/StoreMetadata";
+﻿// Copyright © 2025 Jon Griebel. All rights reserved.
+// Distributed under the MIT license.
+
+import { StoreMetadata, BufferMetadata, RowMetadata, InitialMetrics, MapBufferSubsections, PerKeyMetrics } from "./types/StoreMetadata";
 
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
 const ROW_INACTIVE_FLAG = 0x1;
