@@ -1018,366 +1018,366 @@ videoDB.clear("reallyFakeStore");<br />
         }
 
         /**
-         * Displays the VideoDB class documentation in the right pane.
+         * Displays the updated VideoDB class documentation in the right pane.
          */
         function showClassDocs() {
             // Optional: clear console and code pane first
             clearConsole();
             clearCodePane();
 
-            // Below is the main class documentation HTML; note the added <br /><br /> tags
+            // Updated class documentation HTML, reflecting the latest methods and descriptions.
+            // Also includes 10px padding-bottom for the bolded labels: Parameters, Returns, Behavior, Example
             const docHtml = `
-<h1>VideoDB Class Documentation</h1><br /><br />
+<h1>VideoDB Class Documentation</h1><br />
 
 <p>
-              The <code>VideoDB</code> class provides functionality for managing object stores with
-              <strong>CPU-based metadata</strong>. Each object store can represent a collection of key-value
-              pairs (or “rows”), fully tracked on the CPU, while the actual row data resides in GPU buffers
-              for efficiency...
-</p><br /><br />
+    The <code>VideoDB</code> class provides functionality for managing object stores with
+    <strong>CPU-based metadata</strong>. Each object store can represent a collection of key-value
+    pairs (or “rows”), fully tracked on the CPU, while the actual row data resides in GPU buffers
+    for efficiency. This class implements a deferred-write approach to minimize the overhead of
+    frequent GPU operations.
+</p><br />
 
-<hr /><br /><br />
+<hr /><br />
 
-<h2>Constructor</h2><br /><br />
+<h2>Constructor</h2><br />
 
-<h3><code>constructor(device)</code></h3><br /><br />
+<h3><code style="font-size:larger;">constructor(device)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li>
-                    <code>device</code> (<code>GPUDevice</code>): The WebGPU device instance used
-                    to allocate GPU buffers.
-                  </li>
-                </ul>
-              </li>
-              <li>
-                <strong>Behavior</strong><br>
-                Initializes internal data structures for CPU-based metadata (<code>storeMetadataMap</code>)
-                and a map of store <em>keys</em> to row IDs (<code>storeKeyMap</code>).
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>// Suppose you obtained device from navigator.gpu.requestAdapter()
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li>
+                <code>device</code> (<code>GPUDevice</code>):
+                The WebGPU device instance used to allocate GPU buffers.
+            </li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        Initializes internal data structures for CPU-based metadata
+        (<code>storeMetadataMap</code>) and a map of store keys to row metadata (<code>storeKeyMap</code>).
+        Also sets up a mechanism (<code>pendingWrites</code>) for batching GPU write operations.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>// Suppose you obtained 'device' from navigator.gpu.requestAdapter()
 const videoDB = new VideoDB(device);
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<hr /><br /><br />
+<br />
 
-<h2>Methods</h2><br /><br />
+<h2>Methods</h2><br />
 
-<h3><code>createObjectStore(storeName, options)</code></h3><br /><br />
+<!-- createObjectStore -->
+<h3><code style="font-size:larger;">createObjectStore(storeName, options)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name for the new store.</li>
+            <li>
+                <code>options</code> (<code>object</code>):
                 <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name for the new store.</li>
-                  <li>
-                    <code>options</code> (<code>object</code>):
-                    <ul>
-                      <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): The data format.</li>
-                      <li>
+                    <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): The data format.</li>
+                    <li>
                         <code>typedArrayType</code> (optional):
                         The typed array constructor name (e.g. <code>"Float32Array"</code>, <code>"Float64Array"</code>,
                         <code>"Uint32Array"</code>, <code>"Uint8Array"</code>).
-                      </li>
-                      <li><code>bufferSize</code> (<code>number</code>): The chunk size for GPU buffers (e.g., 250 MB).</li>
-                      <li><code>rowSize</code> (<code>number</code>, optional): The row’s fixed size (if relevant).</li>
-                      <li><code>totalRows</code> (<code>number</code>): A hint for total row capacity.</li>
-                    </ul>
-                  </li>
+                    </li>
+                    <li><code>bufferSize</code> (<code>number</code>): The chunk size for GPU buffers (e.g., 250 MB).</li>
+                    <li><code>rowSize</code> (<code>number</code>, optional): The row’s fixed size (if relevant).</li>
+                    <li><code>totalRows</code> (<code>number</code>): A hint for total row capacity.</li>
                 </ul>
-              </li>
-              <li>
-                <strong>Behavior</strong><br>
-                Creates internal metadata for the store and adds it to <code>storeMetadataMap</code>, also
-                sets up a <code>Map&lt;string, number&gt;</code> for <code>key → rowId</code> references.
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>videoDB.createObjectStore("myFloatStore", {
-              dataType: "TypedArray",
-              typedArrayType: "Float32Array",
-              bufferSize: 250 * 1024 * 1024,
-              totalRows: 1000
+            </li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Throws an error if the store already exists.</li>
+            <li>If <code>dataType</code> is <code>"TypedArray"</code> but <code>typedArrayType</code> is missing, an error is thrown.</li>
+            <li>Calculates <code>rowsPerBuffer</code> if <code>dataType</code> is not <code>"JSON"</code> and <code>rowSize</code> is provided.</li>
+            <li>Initializes store metadata (e.g., <code>buffers</code>, <code>rows</code>, <code>rowSize</code>, <code>bufferSize</code>).</li>
+            <li>Stores the metadata in <code>storeMetadataMap</code> and creates a key map in <code>storeKeyMap</code>.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>videoDB.createObjectStore("myFloatStore", {
+    dataType: "TypedArray",
+    typedArrayType: "Float32Array",
+    bufferSize: 250 * 1024 * 1024,
+    totalRows: 1000
 });
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>listObjectStores()</code></h3><br /><br />
+<!-- deleteObjectStore -->
+<h3><code style="font-size:larger;">deleteObjectStore(storeName)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li><strong>Parameters</strong><br>None</li>
-              <li><strong>Returns</strong><br><code>string[]</code>: The list of all object store names.</li>
-              <li>
-                <strong>Behavior</strong><br>
-                Returns the keys of <code>storeMetadataMap</code> as an array, indicating all known stores.
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>const stores = videoDB.listObjectStores();
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
+        </ul>
+    </li>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+    <code>void</code></li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>If the store doesn’t exist, logs a warning and returns.</li>
+            <li>Removes the store’s metadata from <code>storeMetadataMap</code>.</li>
+            <li>Removes the store’s key map from <code>storeKeyMap</code>.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>videoDB.deleteObjectStore("myFloatStore");
+</code></pre>
+    </li>
+</ul><br />
+
+<!-- listObjectStores -->
+<h3><code style="font-size:larger;">listObjectStores()</code></h3><br />
+<hr style="margin-top:-10px;">
+
+<ul>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+    None</li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>string[]</code>: The list of all object store names.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        Returns the keys of <code>storeMetadataMap</code> as an array, indicating all known stores.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>const stores = videoDB.listObjectStores();
 console.log(stores); // e.g. ["myFloatStore", "jsonStore"]
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>deleteObjectStore(storeName)</code></h3><br /><br />
+<!-- add -->
+<h3><code style="font-size:larger;">add(storeName, key, value)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
-                </ul>
-              </li>
-              <li><strong>Returns</strong><br><code>void</code></li>
-              <li>
-                <strong>Behavior</strong><br>
-                <ul>
-                  <li>Removes the store’s metadata from <code>storeMetadataMap</code>.</li>
-                  <li>Deletes the store’s key map from <code>storeKeyMap</code>.</li>
-                  <li>Iterates over all allocated GPU buffers for that store and calls <code>.destroy()</code> on each.</li>
-                  <li>Logs a message indicating the store is deleted.</li>
-                </ul>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>videoDB.deleteObjectStore("myFloatStore");
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+            <li><code>key</code> (<code>string</code>): A unique key identifying the row.</li>
+            <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
+        </ul>
+    </li>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+    <code>Promise&lt;void&gt;</code></li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Throws an error if the store does not exist.</li>
+            <li>Throws an error if the key already exists (in “add” mode).</li>
+            <li>Serializes the <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code> without immediate flush.</li>
+            <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>// Adding a new JSON record
+await videoDB.add("jsonStore", "record1", { foo: "bar", time: Date.now() });
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>put(storeName, key, value)</code></h3><br /><br />
+<!-- put -->
+<h3><code style="font-size:larger;">put(storeName, key, value)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li><code>storeName</code> (<code>string</code>): The target store name.</li>
-                  <li><code>key</code> (<code>string</code>): A unique string identifying the row.</li>
-                  <li><code>value</code> (<code>any</code>): The data. Must match the store’s <code>typedArrayType</code> if typed.</li>
-                </ul>
-              </li>
-              <li><strong>Returns</strong><br><code>Promise&lt;void&gt;</code></li>
-              <li>
-                <strong>Behavior</strong>
-                <ol>
-                  <li>
-                    If no existing row, allocate space in the last buffer chunk (e.g., 250 MB). If it won’t fit,
-                    create a new chunk. Write data at that offset and store row metadata (<code>rowId</code>, <code>offset</code>, etc.).
-                  </li>
-                  <li>
-                    If the row already exists and the new data is bigger, mark the old row as inactive, allocate
-                    a new row, and write the updated data there.
-                  </li>
-                  <li>Marks store metadata as dirty (<code>dirtyMetadata = true</code>) and increments <code>metadataVersion</code>.</li>
-                </ol>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>// Inserting a Float32Array into "embeddingStore"
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+            <li><code>key</code> (<code>string</code>): A unique string identifying the row.</li>
+            <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
+        </ul>
+    </li>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+    <code>Promise&lt;void&gt;</code></li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>If the row doesn’t exist, it’s created; if it does, it’s overwritten (upsert behavior).</li>
+            <li>Serializes <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code>.</li>
+            <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>// Inserting a Float32Array into "embeddingStore"
 const vector = new Float32Array([1, 2, 3, 4]);
 await videoDB.put("embeddingStore", "vector:001", vector);
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>get(storeName, key)</code></h3><br /><br />
+<!-- get -->
+<h3><code style="font-size:larger;">get(storeName, key)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-                  <li><code>key</code> (<code>string</code>): The key identifying which row to read.</li>
-                </ul>
-              </li>
-              <li>
-                <strong>Returns</strong><br><code>Promise&lt;any|null&gt;</code>: Deserialized data or <code>null</code> if inactive.
-              </li>
-              <li>
-                <strong>Behavior</strong>
-                <ol>
-                  <li>Looks up <code>rowId</code> from the store’s key map. If none, returns <code>null</code>.</li>
-                  <li>If flagged inactive, returns <code>null</code>.</li>
-                  <li>Maps the chunk buffer (<code>GPUMapMode.READ</code>) at the row’s <code>offset</code>.</li>
-                  <li>Copies data into CPU memory, then unmaps the buffer.</li>
-                  <li>Deserializes (JSON, TypedArray, or ArrayBuffer).</li>
-                  <li>Returns the result.</li>
-                </ol>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>const vector = await videoDB.get("embeddingStore", "vector:001");
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+            <li><code>key</code> (<code>string</code>): The key identifying which row to read.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;any|null&gt;</code>: Deserialized data or <code>null</code> if not found.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Ensures all pending writes are flushed before reading (no stale data).</li>
+            <li>Looks up the row metadata by key; if missing, returns <code>null</code>.</li>
+            <li>Reads data from the corresponding GPU buffer and deserializes it.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>const vector = await videoDB.get("embeddingStore", "vector:001");
 console.log("Retrieved vector length:", vector.length);
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<!-- NEW METHODS BELOW -->
-
-<h3><code>delete(storeName, key)</code></h3><br /><br />
+<!-- delete -->
+<h3><code style="font-size:larger;">delete(storeName, key)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-                  <li><code>key</code> (<code>string</code>): The key identifying which row to delete.</li>
-                </ul>
-              </li>
-              <li><strong>Returns</strong><br><code>Promise&lt;void&gt;</code></li>
-              <li>
-                <strong>Behavior</strong>
-                <ol>
-                  <li>Retrieves store metadata and the key map.</li>
-                  <li>Finds the active row metadata corresponding to <code>key</code>. If not found or already inactive, logs a warning and returns.</li>
-                  <li>Optionally wipes the associated GPU data by setting it to zero or another method to ensure “true” deletion.</li>
-                  <li>Marks the row as inactive and removes the <code>key</code> from the key map.</li>
-                  <li>Updates store metadata to reflect the deletion.</li>
-                </ol>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>await videoDB.delete("myFloatStore", "row123");
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+            <li><code>key</code> (<code>string</code>): The key identifying which row to delete.</li>
+        </ul>
+    </li>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+    <code>Promise&lt;void&gt;</code></li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>If the row is not found or already inactive, logs a message and returns.</li>
+            <li>Optionally writes zeros to the GPU buffer for that row (for a “true” data wipe).</li>
+            <li>Queues a delete operation in <code>pendingWrites</code>; actual metadata removal happens on flush.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>await videoDB.delete("myFloatStore", "row123");
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>clear(storeName)</code></h3><br /><br />
+<!-- clear -->
+<h3><code style="font-size:larger;">clear(storeName)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
-                <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name of the object store to clear.</li>
-                </ul>
-              </li>
-              <li><strong>Returns</strong><br><code>void</code></li>
-              <li>
-                <strong>Behavior</strong>
-                <ol>
-                  <li>Retrieves store metadata and the key map for the specified store.</li>
-                  <li>Discards all row metadata by setting <code>storeMeta.rows</code> to an empty array.</li>
-                  <li>Destroys all existing GPU buffers associated with the store.</li>
-                  <li>Clears the array of buffers and creates one fresh buffer for the store.</li>
-                  <li>Clears the key map so there are no active keys.</li>
-                  <li>Updates store metadata and increments its version.</li>
-                </ol>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>videoDB.clear("myFloatStore");
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store to clear.</li>
+        </ul>
+    </li>
+    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+    <code>void</code></li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Removes all rows from the store’s metadata array.</li>
+            <li>Destroys all GPU buffers associated with the store.</li>
+            <li>Recreates a single fresh GPU buffer for subsequent usage.</li>
+            <li>Clears the store’s key map and updates metadata.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>videoDB.clear("myFloatStore");
 </code></pre>
-              </li>
-</ul><br /><br />
+    </li>
+</ul><br />
 
-<h3><code>openCursor(storeName, options?)</code></h3><br /><br />
+<!-- openCursor -->
+<h3><code style="font-size:larger;">openCursor(storeName, options?)</code></h3><br />
+<hr style="margin-top:-10px;">
 
 <ul>
-              <li>
-                <strong>Parameters</strong>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store to iterate over.</li>
+            <li>
+                <code>options</code> (optional, <code>object</code>):
                 <ul>
-                  <li><code>storeName</code> (<code>string</code>): The name of the object store to iterate over.</li>
-                  <li>
-                    <code>options</code> (optional, <code>object</code>):
-                    <ul>
-                      <li>
+                    <li>
                         <code>range</code> (<code>object</code>):
                         <ul>
-                          <li><code>lowerBound</code> (<code>string</code>): The lower bound of keys to include.</li>
-                          <li><code>upperBound</code> (<code>string</code>): The upper bound of keys to include.</li>
-                          <li><code>lowerInclusive</code> (<code>boolean</code>): Whether the lower bound is inclusive.</li>
-                          <li><code>upperInclusive</code> (<code>boolean</code>): Whether the upper bound is inclusive.</li>
+                            <li><code>lowerBound</code> (<code>string</code>): The lower bound of keys to include.</li>
+                            <li><code>upperBound</code> (<code>string</code>): The upper bound of keys to include.</li>
+                            <li><code>lowerInclusive</code> (<code>boolean</code>): Whether the lower bound is inclusive.</li>
+                            <li><code>upperInclusive</code> (<code>boolean</code>): Whether the upper bound is inclusive.</li>
                         </ul>
-                      </li>
-                      <li><code>direction</code> (<code>"next"</code> | <code>"prev"</code>): The direction of iteration.</li>
-                    </ul>
-                  </li>
+                    </li>
+                    <li><code>direction</code> (<code>"next"</code> | <code>"prev"</code>): The direction of iteration.</li>
                 </ul>
-              </li>
-              <li><strong>Returns</strong><br><code>AsyncGenerator&lt;{ key: string; value: any }, void, unknown&gt;</code></li>
-              <li>
-                <strong>Behavior</strong>
-                <ol>
-                  <li>Retrieves store metadata and the key map.</li>
-                  <li>Collects all active keys from the key map.</li>
-                  <li>Applies optional <code>range</code> filtering, removing keys that fall outside the specified bounds.</li>
-                  <li>Sorts keys according to the specified <code>direction</code> (<code>"next"</code> ascending, <code>"prev"</code> descending).</li>
-                  <li>Iterates over each key, retrieves the record via <code>get()</code>, and yields <code>{ key, value }</code>.</li>
-                </ol>
-              </li>
-              <li>
-                <strong>Example</strong>
-                <pre><code>for await (const record of videoDB.openCursor("myFloatStore")) {
-              console.log(record.key, record.value);
+            </li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>AsyncGenerator&lt;{ key: string; value: any }, void, unknown&gt;</code>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Retrieves store metadata and the key map.</li>
+            <li>Collects all active keys from the key map.</li>
+            <li>Optionally filters them by the specified <code>range</code>.</li>
+            <li>Sorts keys in ascending (<code>"next"</code>) or descending (<code>"prev"</code>) order.</li>
+            <li>For each key, retrieves data via <code>get()</code> and yields <code>{ key, value }</code>.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>for await (const record of videoDB.openCursor("myFloatStore")) {
+    console.log(record.key, record.value);
 }
 
 const range = { lowerBound: "100", upperBound: "200", lowerInclusive: true, upperInclusive: false };
 for await (const record of videoDB.openCursor("myFloatStore", { range, direction: "prev" })) {
-              console.log(record.key, record.value);
+    console.log(record.key, record.value);
 }
 </code></pre>
-              </li>
-</ul><br /><br />
-
-<hr /><br /><br />
-
-<div style="font-family: Consolas, 'Courier New', monospace; color: #333; background-color: #f5f5f5; border: 1px solid #ccc; padding: 20px; margin: 10px 0; border-radius: 4px;">
-              <h2 style="margin-top: 0;">Usage Example</h2><br /><br />
-              <pre style="margin: 0;">
-<code style="white-space: pre;">
-// 1. Obtain a GPUDevice (e.g., after requestAdapter()/requestDevice())
-const device = await navigator.gpu.requestAdapter()
-              .then(adapter => adapter.requestDevice());
-
-// 2. Instantiate the VideoDB class
-const videoDB = new VideoDB(device);
-
-// 3. Create an object store for Float32 typed arrays
-videoDB.createObjectStore("embeddingStore", {
-                dataType: "TypedArray",
-                typedArrayType: "Float32Array",
-                bufferSize: 250 * 1024 * 1024, // 250MB
-                totalRows: 1000
-});
-
-// 4. Put data
-const embed = new Float32Array([1.23, 4.56, 7.89]);
-await videoDB.put("embeddingStore", "embed1", embed);
-
-// 5. Retrieve data
-const result = await videoDB.get("embeddingStore", "embed1");
-console.log("Retrieved typed array:", result);
-
-// 6. Create a JSON-based store
-videoDB.createObjectStore("myJsonStore", {
-                dataType: "JSON",
-                bufferSize: 250 * 1024 * 1024,
-                totalRows: 100
-});
-
-const demoObject = {
-                userId: 12345,
-                name: "John Doe",
-                preferences: { theme: "dark", notifications: true },
-                timestamp: new Date().toISOString()
-};
-await videoDB.put("myJsonStore", "user:12345", demoObject);
-
-// 7. Read the JSON back
-const doc = await videoDB.get("myJsonStore", "user:12345");
-console.log("Retrieved JSON doc:", doc);
-
-// 8. Delete the store
-videoDB.deleteObjectStore("myJsonStore");
-</code>
-              </pre><br /><br />
+    </li>
+</ul><br />
 </div>
 `;
 
