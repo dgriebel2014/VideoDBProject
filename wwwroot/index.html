@@ -167,6 +167,13 @@
                 </li>
 
                 <li>
+                    <a href="#" data-task="accuracyTest">Accuracy Test / GET Benchmark</a>
+                    <span class="task-description">
+                        Creates an object store, stores data, then confirms data accuracy and measures GET performance.
+                    </span>
+                </li>
+
+                <li>
                     <a href="#" data-task="classDocs">Class Documentation</a>
                     <span class="task-description">View the complete VideoDB class docs in the right pane.</span>
                 </li>
@@ -284,6 +291,9 @@
                             break;
                         case 'classDocs':
                             showClassDocs();
+                            break;
+                        case 'accuracyTest':
+                            await accuracyTest();
                             break;
                         default:
                             logToConsole(`[ERROR] Unknown task: ${task}`);
@@ -603,6 +613,397 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                 logToConsole("[SUCCESS] All store types created, managed, and deleted in one go!");
             } catch (err) {
                 logToConsole("[ERROR] " + err.message);
+            }
+        }
+
+        /**
+         * Demonstrates an Accuracy Test / GET Benchmark:
+         * 1) Creates N object stores (e.g., 10 or 50).
+         * 2) Fills each store with many thousands of records (if desired), storing the expected data in memory.
+         * 3) Confirms data accuracy by sampling only a fraction of rows (accuracySampleSize).
+         * 4) Benchmarks GET performance for:
+         *    (A) SEQUENTIAL single-record GETs
+         *    (B) RANDOM single-record GETs
+         *    (C) BATCHED GETs across all stores
+         */
+        async function accuracyTest() {
+            clearConsole();
+            clearCodePane();
+
+            logToConsole("[TASK] Accuracy Test / GET Benchmark\n");
+
+            // Ensure we have a GPU device
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            // Customize these values for large tests
+            const storeCount = 1;          // e.g., create 10 or 50 stores
+            const recordsPerStore = 10000; // e.g., 10,000 rows per store
+            const bufferSizeMB = 50;       // GPU buffer size in MB (for each store's buffer)
+            const accuracySampleSize = 1000; // Number of rows to check for correctness (random sample)
+            const batchedGetPercent = 15;  // Percentage of rows to read in each store during batched GET
+
+            // We'll keep an in-memory map of all data so we can confirm accuracy (at least for sampled rows)
+            const inMemoryData = [];
+
+            logToConsole(`[STEP] Creating ${storeCount} store(s), each with ${recordsPerStore} records...`);
+
+            try {
+                // 1) Create multiple stores
+                for (let s = 1; s <= storeCount; s++) {
+                    const storeName = `accuracyStore_${s}`;
+
+                    // Alternate between JSON and TypedArray for variety
+                    const isJson = (s % 2 === 0); // even stores => JSON, odd => TypedArray
+                    const storeOptions = isJson
+                        ? {
+                            dataType: "JSON",
+                            bufferSize: bufferSizeMB * 1024 * 1024,
+                            totalRows: recordsPerStore
+                        }
+                        : {
+                            dataType: "TypedArray",
+                            typedArrayType: "Float32Array",
+                            bufferSize: bufferSizeMB * 1024 * 1024,
+                            totalRows: recordsPerStore
+                        };
+
+                    videoDB.createObjectStore(storeName, storeOptions);
+
+                    // 2) Insert records
+                    for (let r = 0; r < recordsPerStore; r++) {
+                        const key = `rec_${r}`;
+                        let value;
+
+                        if (isJson) {
+                            // ~1KB JSON object
+                            value = createJsonObject1KB();
+                        } else {
+                            // ~1KB Float32Array (about 256 floats)
+                            const floatCount = 256;
+                            value = new Float32Array(floatCount);
+                            for (let i = 0; i < floatCount; i++) {
+                                value[i] = Math.random() * 1000;
+                            }
+                        }
+
+                        // Save the expected data (for potential accuracy checks)
+                        // We store *every* row’s info in memory, but we'll only check a subset.
+                        inMemoryData.push({ storeName, key, expected: value });
+
+                        // Use "put" to allow multiple test runs (avoids "duplicate key" issues)
+                        await videoDB.put(storeName, key, value);
+                    }
+                }
+
+                logToConsole("[SUCCESS] All stores created and populated.");
+
+                // 3) Flush writes before reading
+                logToConsole("[STEP] Flushing all pending writes...");
+                await videoDB.flushWrites();
+                logToConsole("[SUCCESS] Flush complete. Starting GET accuracy checks...");
+
+                // 4) Accuracy Check for a subset of rows
+                const totalRecords = inMemoryData.length;
+                logToConsole(`[STEP] Verifying accuracy on ${accuracySampleSize} random rows (out of ${totalRecords})...`);
+
+                // Build a random sample of indexes
+                const sampledIndexes = randomSampleArrayIndexes(totalRecords, accuracySampleSize);
+
+                let mismatches = 0;
+                for (let i = 0; i < sampledIndexes.length; i++) {
+                    const idx = sampledIndexes[i];
+                    const { storeName, key, expected } = inMemoryData[idx];
+                    const actual = await videoDB.get(storeName, key);
+
+                    if (!compareValues(expected, actual)) {
+                        mismatches++;
+                        if (mismatches < 10) {
+                            logToConsole(`[ERROR] Mismatch in store='${storeName}', key='${key}'.`);
+                        }
+                    }
+                }
+
+                if (mismatches === 0) {
+                    logToConsole("[SUCCESS] All sampled records match exactly! Accuracy confirmed.\n");
+                } else {
+                    logToConsole(`[ERROR] Found ${mismatches} mismatches in sampled data retrieval! Check logs above.\n`);
+                }
+
+                // ===========================
+                // 5) GET PERFORMANCE MEASUREMENT
+                // ===========================
+
+                // (A) SEQUENTIAL GET
+                logToConsole("[STEP] Starting SEQUENTIAL GET performance test (3 seconds)...");
+                const seqRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/false);
+                logToConsole(`[RESULTS] SEQUENTIAL GET: ~${seqRate.toLocaleString()} GETs/sec\n`);
+
+                // (B) RANDOM GET
+                logToConsole("[STEP] Starting RANDOM GET performance test (3 seconds)...");
+                const randRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/true);
+                logToConsole(`[RESULTS] RANDOM GET: ~${randRate.toLocaleString()} GETs/sec\n`);
+
+                // (C1) NON-CONTIGUOUS BATCHED GET (shuffled)
+                logToConsole("[STEP] Starting NON-CONTIGUOUS BATCHED GET performance test (3 seconds)...");
+                const batchRateNonContiguous = await measureNonContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
+                logToConsole(`[RESULTS] NON-CONTIGUOUS BATCHED GET: ~${batchRateNonContiguous.toLocaleString()} GETs/sec\n`);
+
+                // (C2) CONTIGUOUS BATCHED GET (in insertion order)
+                logToConsole("[STEP] Starting CONTIGUOUS BATCHED GET performance test (3 seconds)...");
+                const batchRateContiguous = await measureContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
+                logToConsole(`[RESULTS] CONTIGUOUS BATCHED GET: ~${batchRateContiguous.toLocaleString()} GETs/sec\n`);
+
+                logToConsole("[INFO] Accuracy Test / GET Benchmark Completed.");
+            } catch (err) {
+                logToConsole(`[ERROR] ${err.message}`);
+            }
+
+            // ---------------------------------
+            // Helper: Compare two values (Float32Array or JSON) for accuracy
+            // ---------------------------------
+            function compareValues(expected, actual) {
+                if (expected instanceof Float32Array && actual instanceof Float32Array) {
+                    if (expected.length !== actual.length) return false;
+                    for (let i = 0; i < expected.length; i++) {
+                        if (expected[i] !== actual[i]) return false;
+                    }
+                    return true;
+                } else if (typeof expected === "object" && typeof actual === "object") {
+                    return JSON.stringify(expected) === JSON.stringify(actual);
+                } else {
+                    return expected === actual;
+                }
+            }
+
+            /**
+             * Returns an array of random unique indexes from [0..(max-1)], up to max if sampleSize > max
+             */
+            function randomSampleArrayIndexes(max, sampleSize) {
+                const result = [];
+                const taken = new Set();
+
+                // If sampleSize is larger than max, just sample everything
+                const finalSize = Math.min(sampleSize, max);
+
+                while (result.length < finalSize) {
+                    const randomIndex = Math.floor(Math.random() * max);
+                    if (!taken.has(randomIndex)) {
+                        taken.add(randomIndex);
+                        result.push(randomIndex);
+                    }
+                }
+                return result;
+            }
+        }
+
+        /**
+         * Measures single-record GET operations per second for a specified duration.
+         * Optionally randomizes the access pattern.
+         *
+         * @param {Array<{storeName: string, key: string, expected: any}>} dataMap - The array of stored records.
+         * @param {number} durationMs - How long to run the GET benchmark.
+         * @param {boolean} randomAccess - If true, randomize read order; otherwise sequential.
+         * @returns {Promise<number>} Approximate GET ops per second.
+         */
+        async function measureGetRate(dataMap, durationMs, randomAccess) {
+            // Make a local copy of indexes
+            const indexes = dataMap.map((_, i) => i);
+
+            if (randomAccess) {
+                // Shuffle array using a Durstenfeld shuffle
+                for (let i = indexes.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [indexes[i], indexes[j]] = [indexes[j], indexes[i]];
+                }
+            }
+
+            let count = 0;
+            const start = performance.now();
+
+            while (performance.now() - start < durationMs) {
+                const idx = indexes[count % indexes.length];
+                const { storeName, key } = dataMap[idx];
+
+                // Single-record GET
+                await videoDB.get(storeName, key);
+                count++;
+            }
+
+            const elapsed = (performance.now() - start) / 1000;
+            return Math.round(count / elapsed);
+        }
+
+        /**
+         * Measures batched GET operations per second for a specified duration.
+         * Groups all keys by store, then repeatedly calls `videoDB.getMultiple()` for
+         * only some fraction (e.g. 10%) of that store’s rows.
+         *
+         * @param {Array<{storeName: string, key: string}>} dataMap - The array of stored records.
+         * @param {number} durationMs - How long to run the benchmark.
+         * @param {number} percentRead - The percentage of rows to read from each store on each pass. (default: 10%)
+         * @returns {Promise<number>} Approximate "GETs" per second (i.e., total records retrieved per second).
+         */
+        async function measureBatchedGetRate(dataMap, durationMs, percentRead) {
+            // 1. Group all keys by store
+            const storeToKeys = new Map();
+            for (const { storeName, key } of dataMap) {
+                if (!storeToKeys.has(storeName)) {
+                    storeToKeys.set(storeName, []);
+                }
+                storeToKeys.get(storeName).push(key);
+            }
+
+            // For each store, create a dedicated array of keys. We'll read a random subset (percentRead).
+            // If a store has 10,000 keys, reading 10% means 1,000 keys per store.
+            const allStoreNames = [...storeToKeys.keys()];
+            for (const storeName of allStoreNames) {
+                const fullArr = storeToKeys.get(storeName);
+                // Shuffle once so we can easily pick the top portion each time
+                shuffleArray(fullArr);
+            }
+
+            let totalRecordsRead = 0;
+            const start = performance.now();
+
+            // We'll keep reading until time is up
+            while (performance.now() - start < durationMs) {
+                for (const storeName of allStoreNames) {
+                    const storeKeys = storeToKeys.get(storeName);
+                    if (!storeKeys || storeKeys.length === 0) continue;
+
+                    // How many keys to read from this store
+                    const readCount = Math.floor((percentRead / 100) * storeKeys.length) || 1;
+                    // Grab the first readCount from storeKeys
+                    const subset = storeKeys.slice(0, readCount);
+
+                    // Batched get => returns an array of data for these keys
+                    await videoDB.getMultiple(storeName, subset);
+                    totalRecordsRead += subset.length;
+                }
+            }
+
+            // Calculate how many records per second
+            const elapsed = (performance.now() - start) / 1000;
+            return Math.round(totalRecordsRead / elapsed);
+        }
+
+        /**
+         * Measures **contiguous** batched GET operations per second for a specified duration.
+         * Groups all keys by store, then **does NOT shuffle**, so we read keys in their
+         * insertion order (i.e., rec_0, rec_1, rec_2, ...).
+         *
+         * @param {Array<{storeName: string, key: string}>} dataMap - The array of stored records.
+         * @param {number} durationMs - How long to run the benchmark.
+         * @param {number} percentRead - The percentage of rows to read from each store on each pass.
+         * @returns {Promise<number>} Approximate "GETs" per second (i.e. total records read).
+         */
+        async function measureContiguousBatchedGetRate(dataMap, durationMs, percentRead = 10) {
+            // 1. Group all keys by store
+            const storeToKeys = new Map();
+            for (const { storeName, key } of dataMap) {
+                if (!storeToKeys.has(storeName)) {
+                    storeToKeys.set(storeName, []);
+                }
+                storeToKeys.get(storeName).push(key);
+            }
+
+            // 2. Sort each store's key list in ascending “rec_0, rec_1, rec_2…” order
+            //    so we read from 0 → readCount in contiguous order
+            const allStoreNames = [...storeToKeys.keys()];
+            for (const storeName of allStoreNames) {
+                const arr = storeToKeys.get(storeName);
+                arr.sort((a, b) => {
+                    // We assume keys look like "rec_123". Parse out the number:
+                    const numA = parseInt(a.replace("rec_", ""), 10);
+                    const numB = parseInt(b.replace("rec_", ""), 10);
+                    return numA - numB;
+                });
+            }
+
+            let totalRecordsRead = 0;
+            const start = performance.now();
+
+            // 3. Keep reading until time is up
+            while (performance.now() - start < durationMs) {
+                for (const storeName of allStoreNames) {
+                    const keysArr = storeToKeys.get(storeName);
+                    if (!keysArr || keysArr.length === 0) continue;
+
+                    // e.g., read 10% of that store in ascending order
+                    const readCount = Math.floor((percentRead / 100) * keysArr.length) || 1;
+                    const subset = keysArr.slice(0, readCount);
+
+                    // Batched GET in “contiguous” ascending order
+                    await videoDB.getMultiple(storeName, subset);
+                    totalRecordsRead += subset.length;
+                }
+            }
+
+            const elapsed = (performance.now() - start) / 1000;
+            return Math.round(totalRecordsRead / elapsed);
+        }
+
+        /**
+         * Measures batched GET operations per second for a specified duration.
+         * Groups all keys by store, then repeatedly calls `videoDB.getMultiple()` for
+         * only some fraction (e.g. 10%) of that store’s rows in a **non-contiguous** fashion.
+         * 
+         * NOTE: Keys are shuffled upfront (non-contiguous reading).
+         *
+         * @param {Array<{storeName: string, key: string}>} dataMap - The array of stored records.
+         * @param {number} durationMs - How long to run the benchmark.
+         * @param {number} percentRead - The percentage of rows to read from each store on each pass. (default: 10%)
+         * @returns {Promise<number>} Approximate "GETs" per second (i.e., total records retrieved per second).
+         */
+        async function measureNonContiguousBatchedGetRate(dataMap, durationMs, percentRead = 10) {
+            // 1. Group all keys by store
+            const storeToKeys = new Map();
+            for (const { storeName, key } of dataMap) {
+                if (!storeToKeys.has(storeName)) {
+                    storeToKeys.set(storeName, []);
+                }
+                storeToKeys.get(storeName).push(key);
+            }
+
+            // 2. Shuffle each store's key list once, so every subset is "random" in memory
+            const allStoreNames = [...storeToKeys.keys()];
+            for (const storeName of allStoreNames) {
+                const arr = storeToKeys.get(storeName);
+                shuffleArray(arr); // <— This is why it’s non-contiguous
+            }
+
+            let totalRecordsRead = 0;
+            const start = performance.now();
+
+            // 3. Keep reading until time is up
+            while (performance.now() - start < durationMs) {
+                for (const storeName of allStoreNames) {
+                    const keysArr = storeToKeys.get(storeName);
+                    if (!keysArr || keysArr.length === 0) continue;
+
+                    // e.g. read 10% of that store
+                    const readCount = Math.floor((percentRead / 100) * keysArr.length) || 1;
+                    const subset = keysArr.slice(0, readCount);
+
+                    // Batched GET
+                    await videoDB.getMultiple(storeName, subset);
+                    totalRecordsRead += subset.length;
+                }
+            }
+
+            const elapsed = (performance.now() - start) / 1000;
+            return Math.round(totalRecordsRead / elapsed);
+        }
+
+        /** 
+         * Simple array shuffle (Durstenfeld/Fisher-Yates)
+         */
+        function shuffleArray(arr) {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
             }
         }
 
@@ -1263,6 +1664,38 @@ await videoDB.put("embeddingStore", "vector:001", vector);
         <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
         <pre><code>const vector = await videoDB.get("embeddingStore", "vector:001");
 console.log("Retrieved vector length:", vector.length);
+</code></pre>
+    </li>
+</ul><br />
+
+<!-- getMultiple -->
+<h3><code style="font-size:larger;">getMultiple(storeName, keys)</code></h3><br />
+<hr style="margin-top:-10px;">
+
+<ul>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+            <li><code>keys</code> (<code>string[]</code>): The array of keys to read.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;(any|null)[]&gt;</code>: An array of deserialized data, matching the input key order.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Ensures all pending writes are flushed before reading (no stale data).</li>
+            <li>Mirrors how the single <code>get()</code> function works internally.</li>
+            <li>Efficiently reads multiple rows by using a staging buffer for each row.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>const results = await videoDB.getMultiple("embeddingStore", ["vector:001", "vector:002", "vector:010"]);
+console.log(results[0], results[1], results[2]);
 </code></pre>
     </li>
 </ul><br />

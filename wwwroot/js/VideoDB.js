@@ -148,7 +148,7 @@ export class VideoDB {
             rowsPerBuffer = Math.floor(options.bufferSize / options.rowSize);
         }
         const storeMetadata = {
-            storeName, // Assign storeName here
+            storeName,
             dataType: options.dataType,
             typedArrayType: options.typedArrayType,
             bufferSize: options.bufferSize,
@@ -273,6 +273,116 @@ export class VideoDB {
         }
         const data = await this.readDataFromGPU(storeMeta, rowMetadata);
         return this.deserializeData(storeMeta, data);
+    }
+    /**
+     * Reads an array of keys from the specified store using a staging buffer
+     * for each row, mirroring how your single 'get()' likely works behind the scenes.
+     *
+     * @param {string} storeName - The target store name.
+     * @param {string[]} keys - The array of keys to read.
+     * @returns {Promise<(any|null)[]>} An array of deserialized data, matching the input key order.
+     */
+    async getMultiple(storeName, keys) {
+        const performanceMetrics = {};
+        // Measure flushWrites time
+        const flushStart = performance.now();
+        await this.flushWrites();
+        performanceMetrics.flushWrites = performance.now() - flushStart;
+        // Measure metadata retrieval time
+        const metadataStart = performance.now();
+        const storeMeta = this.getStoreMetadata(storeName); // throws if undefined
+        const keyMap = this.getKeyMap(storeName); // throws if undefined
+        performanceMetrics.metadataRetrieval = performance.now() - metadataStart;
+        // Prepare the result array
+        const results = new Array(keys.length).fill(null);
+        // Measure per-key operations
+        const perKeyMetrics = {
+            findMetadata: 0,
+            createBuffer: 0,
+            copyBuffer: 0,
+            mapBuffer: 0,
+            deserialize: 0,
+        };
+        // Subsections for mapBuffer
+        const mapBufferSubsections = {
+            mapAsync: 0,
+            getMappedRange: 0,
+            copyToUint8Array: 0,
+            unmap: 0,
+        };
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            // Measure row metadata lookup
+            const findMetadataStart = performance.now();
+            const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
+            perKeyMetrics.findMetadata += performance.now() - findMetadataStart;
+            if (!rowMetadata) {
+                continue; // remains null if not found
+            }
+            // Measure buffer creation
+            const createBufferStart = performance.now();
+            const readBuffer = this.device.createBuffer({
+                size: rowMetadata.length,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+            });
+            perKeyMetrics.createBuffer += performance.now() - createBufferStart;
+            // Measure buffer copy
+            const copyBufferStart = performance.now();
+            const commandEncoder = this.device.createCommandEncoder();
+            commandEncoder.copyBufferToBuffer(this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex), // source buffer
+            rowMetadata.offset, // source offset
+            readBuffer, // destination buffer
+            0, // destination offset
+            rowMetadata.length // number of bytes to copy
+            );
+            this.device.queue.submit([commandEncoder.finish()]);
+            perKeyMetrics.copyBuffer += performance.now() - copyBufferStart;
+            // Measure buffer mapping (subsections)
+            const mapBufferStart = performance.now();
+            // Subsection: mapAsync
+            const mapAsyncStart = performance.now();
+            await readBuffer.mapAsync(GPUMapMode.READ);
+            mapBufferSubsections.mapAsync += performance.now() - mapAsyncStart;
+            // Subsection: getMappedRange
+            const getMappedRangeStart = performance.now();
+            const mappedRange = readBuffer.getMappedRange(0, rowMetadata.length);
+            mapBufferSubsections.getMappedRange += performance.now() - getMappedRangeStart;
+            // Subsection: Copy data to Uint8Array
+            const copyToUint8ArrayStart = performance.now();
+            const copiedData = new Uint8Array(mappedRange.slice(0)); // or slice(0) for a safe copy
+            mapBufferSubsections.copyToUint8Array += performance.now() - copyToUint8ArrayStart;
+            // Subsection: unmap
+            const unmapStart = performance.now();
+            readBuffer.unmap();
+            mapBufferSubsections.unmap += performance.now() - unmapStart;
+            perKeyMetrics.mapBuffer += performance.now() - mapBufferStart;
+            // Measure deserialization
+            const deserializeStart = performance.now();
+            const deserialized = this.deserializeData(storeMeta, copiedData);
+            perKeyMetrics.deserialize += performance.now() - deserializeStart;
+            results[i] = deserialized;
+            // Destroy the readBuffer to free GPU memory
+            readBuffer.destroy();
+        }
+        // Log all performance metrics at the end
+        //console.log("** Performance Metrics for getMultiple **", {
+        //    flushWrites: performanceMetrics.flushWrites,
+        //    metadataRetrieval: performanceMetrics.metadataRetrieval,
+        //    perKeyMetrics: {
+        //        findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+        //        createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+        //        copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+        //        mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+        //        mapBufferSubsections: {
+        //            mapAsync: mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+        //            getMappedRange: mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+        //            copyToUint8Array: mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+        //            unmap: mapBufferSubsections.unmap.toFixed(2) + "ms total",
+        //        },
+        //        deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+        //    },
+        //});
+        return results;
     }
     /**
      * Deletes data for a specific key from the GPU-backed store by batching the delete operation.
@@ -435,7 +545,6 @@ export class VideoDB {
      */
     async flushWrites() {
         if (this.pendingWrites.length === 0) {
-            console.info(`No pending writes to flush.`);
             return;
         }
         // 1. Group by GPU buffer
