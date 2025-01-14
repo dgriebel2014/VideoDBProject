@@ -8,6 +8,12 @@ function roundUp(value, align) {
 }
 /** The Web Worker reference (lazy initialized) */
 let gpuWorker = null;
+/**
+ * Retrieves the singleton instance of the GPU worker. Initializes the worker
+ * if it has not been created yet.
+ *
+ * @returns {Worker} The GPU worker instance.
+ */
 function getGpuWorker() {
     if (!gpuWorker) {
         gpuWorker = new Worker(new URL("./gpuWorker.js", import.meta.url), {
@@ -44,8 +50,12 @@ function handleWorkerMessage(evt) {
     }
 }
 /**
- * Example flush helper that returns a Promise which resolves
- * once the worker has written everything successfully.
+ * Sends a batch of data to the GPU worker for processing.
+ *
+ * @param {string} storeName - The name of the store being written to.
+ * @param {ArrayBuffer} dataToWrite - The data to be written to the GPU.
+ * @param {number} rowCount - The number of rows included in the data batch.
+ * @returns {Promise<void>} A promise that resolves when the operation is complete.
  */
 async function sendBatchToWorker(storeName, dataToWrite, rowCount) {
     const worker = getGpuWorker();
@@ -102,7 +112,7 @@ export class VideoDB {
     storeKeyMap;
     // The new properties that enable caching/batching:
     pendingWrites = [];
-    BATCH_SIZE = 2000; // e.g. auto-flush after 2000 writes
+    BATCH_SIZE = 10000; // e.g. auto-flush after 10000 writes
     flushTimer = null;
     /**
      * Initializes a new instance of the VideoDB class.
@@ -609,13 +619,14 @@ export class VideoDB {
         return meta;
     }
     /**
-    * Retrieves the row metadata for a given key, ensuring it's active.
-    *
-    * @param {StoreMetadata} storeMeta - The metadata of the target store.
-    * @param {Map<string, number>} keyMap - A mapping of keys to row IDs for the store.
-    * @param {string} key - The key identifying which row to find.
-    * @returns {RowMetadata | null} The RowMetadata if found and active, or null otherwise.
-    */
+     * Retrieves the row metadata for a specific key from the given store.
+     * Ensures that the row is active and exists in the store.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the store containing the row.
+     * @param {Map<string, number>} keyMap - The map of keys to row IDs.
+     * @param {string} key - The unique key identifying the row.
+     * @returns {RowMetadata | null} The metadata for the row, or null if not found.
+     */
     getRowMetadataForKey(storeMeta, keyMap, key) {
         const rowId = keyMap.get(key);
         if (rowId == null) {
@@ -962,6 +973,16 @@ export class VideoDB {
         }
         return bufMeta.gpuBuffer;
     }
+    /**
+     * Writes data to the specified GPU buffer at a given offset, ensuring
+     * the data is aligned to 4-byte boundaries.
+     *
+     * @param {GPUBuffer} gpuBuffer - The GPU buffer to write to.
+     * @param {number} offset - The offset in the buffer where the data will be written.
+     * @param {ArrayBuffer} arrayBuffer - The data to write to the buffer.
+     * @returns {Promise<number>} The length of the data written (aligned size).
+     * @throws {Error} If the write operation fails.
+     */
     async writeDataToBuffer(gpuBuffer, offset, arrayBuffer) {
         // --- 4-byte alignment fix ---
         const remainder = arrayBuffer.byteLength % 4;
@@ -989,11 +1010,11 @@ export class VideoDB {
         return arrayBuffer.byteLength; // new padded length
     }
     /**
-         * Resets the flush timer. If a timer is already set, it clears it and sets a new one.
-         * When the timer fires after 1 second of inactivity, `flushWrites` is called.
-         *
-         * @private
-         */
+     * Resets the flush timer to delay writing pending operations to the GPU.
+     * If a timer is already set, it clears it and starts a new one.
+     *
+     * @private
+     */
     resetFlushTimer() {
         // If a timer is already set, clear it
         if (this.flushTimer !== null) {
