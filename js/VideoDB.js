@@ -1,3 +1,5 @@
+// Copyright © 2025 Jon Griebel. All rights reserved.
+// Distributed under the MIT license.
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
 const ROW_INACTIVE_FLAG = 0x1;
 /**
@@ -555,6 +557,15 @@ export class VideoDB {
             }
         }
     }
+    /**
+     * Checks whether the number of pending writes has reached the batch size threshold.
+     * If the threshold is met, it clears any existing flush timer and immediately flushes the pending writes to the GPU.
+     *
+     * This method is called after each write operation (`add`, `put`, `delete`) to ensure that writes are batched efficiently.
+     *
+     * @private
+     * @returns {Promise<void>} A promise that resolves once the flush operation (if triggered) completes.
+     */
     async checkAndFlush() {
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
             if (this.flushTimer !== null) {
