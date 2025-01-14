@@ -1,6 +1,8 @@
-﻿VideoDB README body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; max-width: 800px; } h1, h2, h3, h4 { color: #2c3e50; } code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; font-family: Consolas, "Courier New", monospace; } pre { background: #f9f9f9; border: 1px solid #ccc; padding: 10px; overflow-x: auto; border-radius: 4px; } hr { border: none; border-bottom: 1px solid #ccc; margin: 30px 0; } ul { margin-left: 20px; }
+﻿VideoDB README 
 
-_Disclaimer:_ As of this writing, the VideoDB project is less than 72 hours old and remains under active development. Expect rapid changes and frequent updates.
+As of this writing, the VideoDB project is less than 72 hours old and remains under active development. Expect rapid changes and frequent updates.
+
+As it turns out, reading data is quite slow (300kb per second).  Also, data put inside a GPU buffer is sandboxed and can't be shared with other applications.  Hopefully you find this usefull despite those issues.
 
 # VideoDB
 
