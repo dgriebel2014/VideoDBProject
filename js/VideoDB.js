@@ -6,69 +6,6 @@ const ROW_INACTIVE_FLAG = 0x1;
 function roundUp(value, align) {
     return Math.ceil(value / align) * align;
 }
-/** The Web Worker reference (lazy initialized) */
-let gpuWorker = null;
-/**
- * Retrieves the singleton instance of the GPU worker. Initializes the worker
- * if it has not been created yet.
- *
- * @returns {Worker} The GPU worker instance.
- */
-function getGpuWorker() {
-    if (!gpuWorker) {
-        gpuWorker = new Worker(new URL("./gpuWorker.js", import.meta.url), {
-            type: "module",
-        });
-        gpuWorker.onmessage = handleWorkerMessage;
-        // Optionally, send an INIT_DEVICE message to the worker
-        gpuWorker.postMessage({ type: "INIT_DEVICE" });
-    }
-    return gpuWorker;
-}
-/**
- * Handle responses coming back from the worker.
- */
-function handleWorkerMessage(evt) {
-    const msg = evt.data;
-    if (!msg?.type)
-        return;
-    switch (msg.type) {
-        case "DEVICE_READY": {
-            console.log("[gpuWorker] Device is ready in worker:", msg.payload);
-            break;
-        }
-        case "WRITE_DONE": {
-            // The worker has successfully written the batch
-            const { storeName, rowCount } = msg.payload;
-            console.log(`[gpuWorker] WRITE_DONE for store="${storeName}" rowCount=${rowCount}`);
-            break;
-        }
-        case "ERROR": {
-            console.error("[gpuWorker] Error:", msg.payload);
-            break;
-        }
-    }
-}
-/**
- * Sends a batch of data to the GPU worker for processing.
- *
- * @param {string} storeName - The name of the store being written to.
- * @param {ArrayBuffer} dataToWrite - The data to be written to the GPU.
- * @param {number} rowCount - The number of rows included in the data batch.
- * @returns {Promise<void>} A promise that resolves when the operation is complete.
- */
-async function sendBatchToWorker(storeName, dataToWrite, rowCount) {
-    const worker = getGpuWorker();
-    // Create a new promise + store the resolve/reject
-    const promise = new Promise((resolve, reject) => { });
-    // Post the data to the worker
-    worker.postMessage({
-        type: "WRITE_BATCH",
-        payload: { storeName, batch: dataToWrite, rowCount },
-    });
-    // Wait for the worker to confirm (WRITE_DONE) or error
-    await promise;
-}
 /**
  * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
  * @param jsonString - The original JSON string to pad.
