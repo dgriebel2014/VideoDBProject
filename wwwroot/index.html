@@ -212,6 +212,8 @@
                 .replace(/\[SUCCESS\]/g, "<b style='color: green;'>[SUCCESS]</b>")
                 .replace(/\[ERROR\]/g, "<b style='color: red;'>[ERROR]</b>")
                 .replace(/\[TASK\]/g, "<b style='color: navy;'>[TASK]</b>")
+                .replace(/\[RESULTS\]/g, "<b style='color: navy;'>[RESULTS]</b>")
+                .replace(/\[STEP\]/g, "<b>[STEP]</b>")
                 .replace(/\n/g, "<br/>");
 
             // Append the formatted message (plus a new line) to the existing HTML
@@ -328,7 +330,7 @@
             logToConsole("[TASK] Checking GPU availability...");
 
             // STEP 1: Attempt to create or confirm the GPU device
-            logToConsole("[Step 1] Attempting to request the GPU device...");
+            logToConsole("[STEP] Attempting to request the GPU device...");
             if (!device) {
                 await setupDevice();
             }
@@ -370,19 +372,19 @@ videoDB = new VideoDB(device);<br /><br />
         async function manageSingleStore(storeName, storeOptions, dataToInsert, key) {
             logToConsole(`[TASK] Managing store '${storeName}'...`);
 
-            // STEP 1: Create the store
-            logToConsole(`[Step 1] Creating store '${storeName}'...`);
+            // [STEP] Create the store
+            logToConsole(`[STEP] Creating store '${storeName}'...`);
             videoDB.createObjectStore(storeName, storeOptions);
             logToConsole(`[SUCCESS] Created '${storeName}'.`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 1. Create the store: ${storeName}</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Create the store: ${storeName}</b><br />
 videoDB.createObjectStore("${storeName}", ${JSON.stringify(storeOptions, null, 4)});<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 2: Add data (fails if the key already exists)
+            // [STEP] Add data (fails if the key already exists)
             let snippetForDataToInsert;
             if (storeOptions.dataType === "TypedArray") {
                 // Example: new Float32Array([1.11, 2.22, 3.33])
@@ -393,117 +395,117 @@ videoDB.createObjectStore("${storeName}", ${JSON.stringify(storeOptions, null, 4
                 snippetForDataToInsert = JSON.stringify(dataToInsert, null, 4);
             }
 
-            logToConsole(`[Step 2] Adding data into '${storeName}' under key '${key}': ${dataToInsert}`);
+            logToConsole(`[STEP] Adding data into '${storeName}' under key '${key}': ${JSON.stringify(dataToInsert)}`);
             await videoDB.add(storeName, key, dataToInsert);
             logToConsole(`[SUCCESS] Data added under key '${key}'.`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 2. Add data (will fail if key exists)</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Add data (will fail if key exists)</b><br />
 const dataToAdd = ${snippetForDataToInsert};<br />
 await videoDB.add("${storeName}", "${key}", dataToAdd);<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 3: Get the data to confirm the 'add' worked
-            logToConsole(`[Step 3] Retrieving data from '${storeName}' key '${key}'...`);
+            // [STEP] Get the data to confirm the 'add' worked
+            logToConsole(`[STEP] Retrieving data from '${storeName}' key '${key}'...`);
             let retrieved = await videoDB.get(storeName, key);
 
             let retrievedStr = retrieved;
             // Convert typed array to string if necessary
             if (retrieved && typeof retrieved.join === "function") {
                 retrievedStr = retrieved.join(", ");
-            } else if (typeof retrieved === 'object') {
+            } else if (typeof retrieved === "object") {
                 retrievedStr = JSON.stringify(retrieved);
             }
             logToConsole(`[SUCCESS] Retrieved (from add): ${retrievedStr}`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 3. Get data</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Get data</b><br />
 const retrievedAdd = await videoDB.get("${storeName}", "${key}");
 console.log("Retrieved after add:", retrievedAdd);<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 4: Put data (same key) to demonstrate an update/overwrite
+            // [STEP] Put data (same key) to demonstrate an update/overwrite
             const updateObj = (storeOptions.dataType === "TypedArray")
                 ? new self[storeOptions.typedArrayType]([9, 8, 7]) // just an example array
                 : { updatedField: "newValue", time: Date.now() };
 
-            logToConsole(`[Step 4] Putting updated data into '${storeName}' under key '${key}'...`);
+            logToConsole(`[STEP] Putting updated data into '${storeName}' under key '${key}'...`);
             await videoDB.put(storeName, key, updateObj);
             logToConsole(`[SUCCESS] Data updated (overwritten) under key '${key}'.`);
 
             let snippetForUpdate;
             if (storeOptions.dataType === "TypedArray") {
-                snippetForUpdate = `new ${storeOptions.typedArrayType}([9,8,7])`;
+                snippetForUpdate = `new ${storeOptions.typedArrayType}([9, 8, 7])`;
             } else {
                 snippetForUpdate = JSON.stringify(updateObj, null, 4);
             }
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 4. Put data (overwrite existing key)</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Put data (overwrite existing key)</b><br />
 const updatedData = ${snippetForUpdate};<br />
 await videoDB.put("${storeName}", "${key}", updatedData);<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 5: OpenCursor to show all active records in the store
-            logToConsole("[Step 5] Iterating over store entries with openCursor...");
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 5. OpenCursor to view all keys/values</b><br />
+            // [STEP] OpenCursor to show all active records in the store
+            logToConsole(`[STEP] Iterating over store entries with openCursor...`);
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] OpenCursor to view all keys/values</b><br />
 for await (const record of videoDB.openCursor("${storeName}")) {
     console.log(record.key, record.value);
 }<br /><br />
-</code>
-    `);
+</code>`
+            );
             try {
                 for await (const record of videoDB.openCursor(storeName)) {
-                    logToConsole(`   Cursor found key='${record.key}' => ${JSON.stringify(record.value)}`);
+                    logToConsole(`Cursor found key='${record.key}' => ${JSON.stringify(record.value)}`);
                 }
             } catch (err) {
-                logToConsole("[ERROR] " + err.message);
+                logToConsole(`[ERROR] ${err.message}`);
             }
             logToConsole(`[SUCCESS] openCursor() iteration finished for '${storeName}'.`);
 
-            // STEP 6: Delete the single record
-            logToConsole("[Step 6] Deleting the single record from the store...");
+            // [STEP] Delete the single record
+            logToConsole(`[STEP] Deleting the single record from the store...`);
             await videoDB.delete(storeName, key);
             logToConsole(`[SUCCESS] The record with key '${key}' was deleted.`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 6. Delete a single record by key</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Delete a single record by key</b><br />
 await videoDB.delete("${storeName}", "${key}");<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 7: Clear the entire store
-            logToConsole("[Step 7] Clearing all data in the store...");
+            // [STEP] Clear the entire store
+            logToConsole(`[STEP] Clearing all data in the store...`);
             await videoDB.clear(storeName);
             logToConsole(`[SUCCESS] The store '${storeName}' has been cleared.`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 7. Clear the store</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Clear the store</b><br />
 videoDB.clear("${storeName}");<br /><br />
-</code>
-    `);
+</code>`
+            );
 
-            // STEP 8: Finally, delete the store
-            logToConsole(`[Step 8] Deleting store '${storeName}'...`);
+            // [STEP] Finally, delete the store
+            logToConsole(`[STEP] Deleting store '${storeName}'...`);
             videoDB.deleteObjectStore(storeName);
             logToConsole(`[SUCCESS] '${storeName}' deleted.`);
 
-            logCommandToConsole(`
-<code>
-<b style='color:green;'>// 8. Delete the store</b><br />
+            logCommandToConsole(
+                `<code>
+<b style='color:green;'>// [STEP] Delete the store</b><br />
 videoDB.deleteObjectStore("${storeName}");<br /><br />
-</code>
-    `);
+</code>`
+            );
 
             // End with a blank line for spacing in the console
             logToConsole("");
@@ -610,6 +612,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
          */
         async function testErrors() {
             logToConsole("[TASK] Testing error scenarios...");
+            logToConsole("");
 
             // Ensure we have a device/videoDB
             if (!device || !videoDB) {
@@ -617,10 +620,10 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             }
 
             // 1. Create a store with a name that already exists
-            logToConsole("[Step 1] Attempting to create a store with a name that already exists...");
+            logToConsole("[STEP] Attempting to create a store with a name that already exists...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 1: Create 'existingStore' twice<br /></b>
+<b style="color:green;">// Create 'existingStore' twice<br /></b>
 videoDB.createObjectStore("existingStore", {<br />
     dataType: "JSON",<br />
     bufferSize: 256,<br />
@@ -651,10 +654,10 @@ videoDB.createObjectStore("existingStore", {<br />
             logToConsole(""); // blank line between steps
 
             // 2. Create a TypedArray store without specifying typedArrayType
-            logToConsole("[Step 2] Attempting to create a TypedArray store with no typedArrayType...");
+            logToConsole("[STEP] Attempting to create a TypedArray store with no typedArrayType...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 2: Omit 'typedArrayType' in a TypedArray store<br /></b>
+<b style="color:green;">// Omit 'typedArrayType' in a TypedArray store<br /></b>
 videoDB.createObjectStore("badTypedArrayStore", {<br />
     dataType: "TypedArray",<br />
     bufferSize: 1024,<br />
@@ -675,10 +678,10 @@ videoDB.createObjectStore("badTypedArrayStore", {<br />
             logToConsole("");
 
             // 3. Add a duplicate key to test "add" mode conflict
-            logToConsole("[Step 3] Adding a duplicate key to a store using 'add' mode...");
+            logToConsole("[STEP] Adding a duplicate key to a store using 'add' mode...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 3: Duplicate key "testKey" using 'add'<br /></b>
+<b style="color:green;">// Duplicate key "testKey" using 'add'<br /></b>
 videoDB.createObjectStore("uniqueKeysOnly", {<br />
     dataType: "JSON",<br />
     bufferSize: 1024,<br />
@@ -703,10 +706,10 @@ await videoDB.add("uniqueKeysOnly", "testKey", { val: 2 });<br />
             logToConsole("");
 
             // 4. Put the wrong data type into a TypedArray store
-            logToConsole("[Step 4] Putting a JSON object in a Float32Array store...");
+            logToConsole("[STEP] Putting a JSON object in a Float32Array store...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 4: Attempt to store non-float data in a Float32Array store<br /></b>
+<b style="color:green;">// Attempt to store non-float data in a Float32Array store<br /></b>
 videoDB.createObjectStore("floatStore", {<br />
     dataType: "TypedArray",<br />
     typedArrayType: "Float32Array",<br />
@@ -730,62 +733,11 @@ await videoDB.put("floatStore", "wrongData", { not: "a float array" });<br />
             }
             logToConsole("");
 
-            // 5. Get a key that does not exist
-            logToConsole("[Step 5] Attempting to get a non-existing key from 'floatStore'...");
-            logCommandToConsole(`
-<code>
-<b style="color:green;">// Step 5: Get a key that doesn't exist in 'floatStore'<br /></b>
-const missingData = await videoDB.get("floatStore", "doesNotExist");<br />
-</code><br />
-    `);
-            try {
-                const missingData = await videoDB.get("floatStore", "doesNotExist");
-                if (missingData === null) {
-                    logToConsole("[SUCCESS] Key not found, returned null as expected.");
-                } else {
-                    logToConsole("[ERROR] Unexpected result, expected null!");
-                }
-            } catch (err) {
-                logToConsole("[ERROR] " + err.message);
-            }
-            logToConsole("");
-
-            // 6. Delete a key that does not exist
-            logToConsole("[Step 6] Deleting a non-existing key from 'floatStore'...");
-            logCommandToConsole(`
-<code>
-<b style="color:green;">// Step 6: Delete a key that doesn't exist<br /></b>
-await videoDB.delete("floatStore", "randomKey");<br />
-</code><br />
-    `);
-            try {
-                await videoDB.delete("floatStore", "randomKey");
-                // This shouldn't throw an Error, but logs a warning
-            } catch (err) {
-                logToConsole("[ERROR] " + err.message);
-            }
-            logToConsole("");
-
-            // 7. Delete a store that doesn't exist
-            logToConsole("[Step 7] Deleting a non-existing store...");
-            logCommandToConsole(`
-<code>
-<b style="color:green;">// Step 7: Delete "fakeStoreName" which doesn't exist<br /></b>
-videoDB.deleteObjectStore("fakeStoreName");<br />
-</code><br />
-    `);
-            try {
-                videoDB.deleteObjectStore("fakeStoreName");
-            } catch (err) {
-                logToConsole("[ERROR] " + err.message);
-            }
-            logToConsole("");
-
             // 8. Open cursor on a store that doesn't exist
-            logToConsole("[Step 8] Opening cursor on 'fakeCursorStore'...");
+            logToConsole("[STEP] Opening cursor on 'fakeCursorStore'...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 8: Attempt to open a cursor on non-existing "fakeCursorStore"<br /></b>
+<b style="color:green;">// Attempt to open a cursor on non-existing "fakeCursorStore"<br /></b>
 for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
     // ...<br />
 }<br />
@@ -801,10 +753,10 @@ for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
             logToConsole("");
 
             // 9. Clear a store that doesn’t exist
-            logToConsole("[Step 9] Clearing a store that doesn’t exist...");
+            logToConsole("[STEP] Clearing a store that doesn’t exist...");
             logCommandToConsole(`
 <code>
-<b style="color:green;">// Step 9: Attempt to clear a non-existing "reallyFakeStore"<br /></b>
+<b style="color:green;">// Attempt to clear a non-existing "reallyFakeStore"<br /></b>
 videoDB.clear("reallyFakeStore");<br />
 </code><br />
     `);
@@ -838,7 +790,6 @@ videoDB.clear("reallyFakeStore");<br />
             logToConsole("[TASK] Stress Test: Measuring add, put, and delete performance for multiple store types.");
 
             logToConsole("");
-            logToConsole("[NOTE] May freeze your main thread for the duration of the stress test.");
             logToConsole("[NOTE] Each row is approximately 1KB in size.");
             logToConsole("");
 
@@ -960,8 +911,8 @@ videoDB.clear("reallyFakeStore");<br />
 
                 // Delete store
                 videoDB.deleteObjectStore(name);
-                logToConsole(`[SUCCESS] Deleted store '${name}' after test.`);
-                logToConsole(``);
+
+                logToConsole("");
             }
 
             // Calculate total data transferred (excluding DELETE operations)
@@ -979,10 +930,9 @@ videoDB.clear("reallyFakeStore");<br />
             // Summarize results
             logToConsole("[RESULTS] Stress Test Performance:");
             for (const r of perfResults) {
-                logToConsole(`   ${r.store}: ADD=${r.addRate} rec/sec, PUT=${r.putRate} rec/sec, DEL=${r.delRate} rec/sec`);
+                logToConsole(`   ${r.store}: ADD=${r.addRate.toLocaleString()} rec/sec, PUT=${r.putRate.toLocaleString()} rec/sec, DEL=${r.delRate.toLocaleString()} rec/sec`);
             }
-
-            logToConsole(`[RESULTS] Total Data Transferred (ADD/PUT/DELETE): ${totalDataStr}`);
+            logToConsole(`[RESULTS] Total Data Transferred (ADD/PUT): ${totalDataStr}`);
             logToConsole(``);
             logToConsole("[INFO] Stress Test completed.");
         }
@@ -1000,6 +950,7 @@ videoDB.clear("reallyFakeStore");<br />
                     if (remaining < 0) {
                         clearInterval(timer);
                         resolve();
+                        logToConsole(``);
                     }
                 }, 1000);
             });
@@ -1041,7 +992,7 @@ videoDB.clear("reallyFakeStore");<br />
 
             const elapsed = (performance.now() - startTime) / 1000;
             const rate = Math.round(count / elapsed);
-            logToConsole(`[INFO] Completed ~${count} ${operation.toUpperCase()} ops in ${elapsed.toFixed(2)}s => ~${rate} rec/sec`);
+            logToConsole(`[INFO] Completed ~${count.toLocaleString()} ${operation.toUpperCase()} ops in ${elapsed.toFixed(2)}s => ~${rate.toLocaleString()} rec/sec`);
             return rate;
         }
 
@@ -1062,7 +1013,7 @@ videoDB.clear("reallyFakeStore");<br />
 
             const elapsed = (performance.now() - startTime) / 1000;
             const rate = Math.round(count / elapsed);
-            logToConsole(`[INFO] Completed ~${count} DELETE ops in ${elapsed.toFixed(2)}s => ~${rate} rec/sec`);
+            logToConsole(`[INFO] Completed ~${count.toLocaleString()} DELETE ops in ${elapsed.toFixed(2)}s => ~${rate.toLocaleString()} rec/sec`);
             return rate;
         }
 
