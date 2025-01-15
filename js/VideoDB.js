@@ -206,9 +206,8 @@ export class VideoDB {
         return result;
     }
     /**
-     * Reads an array of keys or wildcard patterns from the specified store,
-     * using a staging buffer for each row, mirroring how the single `get()` method
-     * works behind the scenes. Supports SQL Server–style wildcards in key names.
+     * Reads an array of keys or wildcard patterns from the specified store
+     * using a staging buffer for each row.  Supports SQL Server–style wildcards in key names.
      *
      * @param {string} storeName - The target store name.
      * @param {string[]} keys - The array of keys (or wildcard patterns) to read.
