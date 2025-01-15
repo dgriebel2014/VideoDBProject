@@ -1216,7 +1216,7 @@ export class VideoDB {
         // Metrics structure
         const perKeyMetrics: PerKeyMetrics = this.initializeMetrics();
 
-        // 1. Collect row metadata for each key
+        // Collect row metadata for each key
         const { rowInfos, totalBytes } = this.collectRowInfos(
             keyMap,
             storeMeta,
@@ -1230,16 +1230,16 @@ export class VideoDB {
             return { results, perKeyMetrics };
         }
 
-        // 2. Create a single large GPU buffer
+        // Create a single large GPU buffer
         const bigReadBuffer = this.createBigReadBuffer(totalBytes, perKeyMetrics);
 
-        // 3. Copy data from each row’s GPU buffer into the large buffer
+        // Copy data from each row’s GPU buffer into the large buffer
         this.copyRowsIntoBigBuffer(rowInfos, storeMeta, bigReadBuffer, perKeyMetrics);
 
-        // 4. Read all data at once (mapAsync, getMappedRange, unmap)
+        // Read all data at once (mapAsync, getMappedRange, unmap)
         const bigCopiedData = await this.mapAndReadBuffer(bigReadBuffer, perKeyMetrics);
 
-        // 5. Deserialize each row
+        // Deserialize each row
         this.deserializeRows(rowInfos, storeMeta, bigCopiedData, results, perKeyMetrics);
 
         // Cleanup the buffer
