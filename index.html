@@ -666,7 +666,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             logToConsole(`[STEP] Creating ${storeCount} store(s), each with ${recordsPerStore} records...`);
 
             try {
-                // 1) Create multiple stores
+                // Create multiple stores
                 for (let s = 1; s <= storeCount; s++) {
                     const storeName = `accuracyStore_${s}`;
 
@@ -687,7 +687,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
 
                     videoDB.createObjectStore(storeName, storeOptions);
 
-                    // 2) Insert records
+                    // Insert records
                     for (let r = 0; r < recordsPerStore; r++) {
                         const key = `rec_${r}`;
                         let value;
@@ -715,12 +715,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
 
                 logToConsole("[SUCCESS] All stores created and populated.");
 
-                // 3) Flush writes before reading
-                logToConsole("[STEP] Flushing all pending writes...");
-                await videoDB.flushWrites();
-                logToConsole("[SUCCESS] Flush complete. Starting GET accuracy checks...");
-
-                // 4) Accuracy Check for a subset of rows
+                // Accuracy Check for a subset of rows
                 const totalRecords = inMemoryData.length;
                 logToConsole(`[STEP] Verifying accuracy on ${accuracySampleSize} random rows (out of ${totalRecords})...`);
 
