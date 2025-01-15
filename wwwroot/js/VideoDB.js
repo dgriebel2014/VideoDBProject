@@ -226,192 +226,6 @@ export class VideoDB {
         return results;
     }
     /**
-     * Flushes all pending writes, then retrieves the store metadata and key map.
-     * Also tracks performance time for these operations.
-     */
-    async flushAndGetMetadata(storeName) {
-        const performanceMetrics = {
-            flushWrites: 0,
-            metadataRetrieval: 0,
-        };
-        const flushStart = performance.now();
-        await this.flushWrites(); // your method
-        performanceMetrics.flushWrites = performance.now() - flushStart;
-        const metadataStart = performance.now();
-        const storeMeta = this.getStoreMetadata(storeName); // throws if undefined
-        const keyMap = this.getKeyMap(storeName); // throws if undefined
-        performanceMetrics.metadataRetrieval = performance.now() - metadataStart;
-        return { storeMeta, keyMap, metrics: performanceMetrics };
-    }
-    /**
-     * Converts a SQL Server–style LIKE pattern into a RegExp.
-     * Supports the following:
-     *   - % => .*  (any string)
-     *   - _ => .   (any single character)
-     *   - [abc] => [abc] (character class)
-     *   - [^abc] => [^abc] (negated character class)
-     */
-    likeToRegex(pattern) {
-        // Escape special regex chars, except for our placeholders: %, _, [, ]
-        let regexPattern = pattern
-            // Escape backslash first to avoid double-escape issues
-            .replace(/\\/g, "\\\\")
-            // Escape everything else that might conflict with regex
-            .replace(/[.+^${}()|[\]\\]/g, (char) => `\\${char}`)
-            // Convert SQL wildcards into regex equivalents
-            .replace(/%/g, ".*")
-            .replace(/_/g, ".");
-        // Because we escaped '[' and ']' above, we need to revert them
-        // for bracket expressions. We'll do a simple approach:
-        regexPattern = regexPattern.replace(/\\\[(.*?)]/g, "[$1]");
-        // Build final anchored regex
-        return new RegExp(`^${regexPattern}$`, "u"); // "u" (Unicode) can help with extended chars
-    }
-    /**
-     * Expands a single key or wildcard pattern into all matching keys from the key map.
-     * If the string does not contain wildcard characters, returns array with just [key].
-     */
-    expandWildcard(key, keyMap) {
-        // Quick check for wildcard chars. If none, just return [key].
-        if (!/[%_\[\]]/.test(key)) {
-            return [key];
-        }
-        const regex = this.likeToRegex(key);
-        const allStoreKeys = Array.from(keyMap.keys());
-        return allStoreKeys.filter((k) => regex.test(k));
-    }
-    /**
-     * Applies expandWildcard to each item in the array and flattens the result.
-     */
-    expandAllWildcards(keys, keyMap) {
-        // This assumes you’ve created likeToRegex, expandWildcard, etc.
-        return keys.flatMap((key) => this.expandWildcard(key, keyMap));
-    }
-    /**
-     * Reads row data for a list of keys in a SINGLE GPU mapAsync call.
-     * Returns both the results array and cumulative performance metrics.
-     */
-    async readAllRows(storeName, storeMeta, keyMap, keys) {
-        // Prepare results array
-        const results = new Array(keys.length).fill(null);
-        // Initialize aggregated metrics
-        const perKeyMetrics = {
-            findMetadata: 0,
-            createBuffer: 0,
-            copyBuffer: 0,
-            mapBuffer: 0,
-            deserialize: 0,
-            mapBufferSubsections: {
-                mapAsync: 0,
-                getMappedRange: 0,
-                copyToUint8Array: 0,
-                unmap: 0,
-            },
-        };
-        // Find row metadata for all keys
-        const findMetadataStart = performance.now();
-        const rowInfos = [];
-        let totalBytes = 0;
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
-            // If row not found, results[i] remains null
-            if (!rowMetadata) {
-                continue;
-            }
-            // Track this row
-            rowInfos.push({
-                rowMetadata,
-                rowIndex: i,
-                offsetInFinalBuffer: totalBytes,
-                length: rowMetadata.length,
-            });
-            // Accumulate total size
-            totalBytes += rowMetadata.length;
-        }
-        perKeyMetrics.findMetadata = performance.now() - findMetadataStart;
-        // If no rows found, return early
-        if (rowInfos.length === 0) {
-            return { results, perKeyMetrics };
-        }
-        // Create a single GPU buffer large enough for all rows
-        const createBufferStart = performance.now();
-        const bigReadBuffer = this.device.createBuffer({
-            size: totalBytes,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-        });
-        perKeyMetrics.createBuffer = performance.now() - createBufferStart;
-        // Copy from each row’s GPU buffer into our big buffer
-        const copyBufferStart = performance.now();
-        const commandEncoder = this.device.createCommandEncoder();
-        for (const rowInfo of rowInfos) {
-            const src = this.getBufferByIndex(storeMeta, rowInfo.rowMetadata.bufferIndex);
-            commandEncoder.copyBufferToBuffer(src, rowInfo.rowMetadata.offset, // source offset
-            bigReadBuffer, rowInfo.offsetInFinalBuffer, // dest offset
-            rowInfo.length);
-        }
-        this.device.queue.submit([commandEncoder.finish()]);
-        perKeyMetrics.copyBuffer = performance.now() - copyBufferStart;
-        // Map once, read data, unmap once
-        const mapBufferStart = performance.now();
-        // mapAsync
-        const mapAsyncStart = performance.now();
-        await bigReadBuffer.mapAsync(GPUMapMode.READ);
-        perKeyMetrics.mapBufferSubsections.mapAsync = performance.now() - mapAsyncStart;
-        // getMappedRange
-        const getMappedRangeStart = performance.now();
-        const fullMappedRange = bigReadBuffer.getMappedRange();
-        perKeyMetrics.mapBufferSubsections.getMappedRange = performance.now() - getMappedRangeStart;
-        // copyToUint8Array
-        const copyToUint8ArrayStart = performance.now();
-        // If you want the entire copy: const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
-        // But it can be more efficient to slice per row. We'll do a single copy anyway:
-        const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
-        perKeyMetrics.mapBufferSubsections.copyToUint8Array = performance.now() - copyToUint8ArrayStart;
-        // unmap
-        const unmapStart = performance.now();
-        bigReadBuffer.unmap();
-        perKeyMetrics.mapBufferSubsections.unmap = performance.now() - unmapStart;
-        perKeyMetrics.mapBuffer = performance.now() - mapBufferStart;
-        // Deserialize each row chunk
-        const deserializeStart = performance.now();
-        for (const rowInfo of rowInfos) {
-            // Each row's data is located in bigCopiedData from
-            // rowInfo.offsetInFinalBuffer to offsetInFinalBuffer+length
-            const rowSlice = bigCopiedData.subarray(rowInfo.offsetInFinalBuffer, rowInfo.offsetInFinalBuffer + rowInfo.length);
-            // Convert bytes to object
-            const deserialized = this.deserializeData(storeMeta, rowSlice);
-            // Store in results
-            results[rowInfo.rowIndex] = deserialized;
-        }
-        perKeyMetrics.deserialize = performance.now() - deserializeStart;
-        // Cleanup
-        bigReadBuffer.destroy();
-        return { results, perKeyMetrics };
-    }
-    /**
-     * Logs consolidated performance metrics to the console.
-     */
-    logPerformance(initialMetrics, perKeyMetrics) {
-        console.log("** Performance Metrics for getMultiple **", {
-            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
-            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
-            perKeyMetrics: {
-                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
-                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
-                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
-                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
-                mapBufferSubsections: {
-                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
-                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
-                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
-                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
-                },
-                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
-            },
-        });
-    }
-    /**
      * Deletes data for a specific key from the GPU-backed store by batching the delete operation.
      * The actual GPU write and metadata update are deferred until `flushWrites` is called.
      *
@@ -690,12 +504,13 @@ export class VideoDB {
         return 0;
     }
     /**
-         * Finds the active row metadata for a given key.
-         * @param keyMap - The key map for the store.
-         * @param key - The key to search for.
-         * @param rows - The array of row metadata.
-         * @returns The active RowMetadata or null if not found/inactive.
-         */
+     * Finds the active row metadata for a given key.
+     *
+     * @param {Map<string, number>} keyMap - The key map for the store.
+     * @param {string} key - The key to search for.
+     * @param {RowMetadata[]} rows - The array of row metadata.
+     * @returns {RowMetadata | null} The active RowMetadata or null if not found/inactive.
+     */
     findActiveRowMetadata(keyMap, key, rows) {
         const rowId = keyMap.get(key);
         if (rowId == null) {
@@ -983,12 +798,13 @@ export class VideoDB {
         }
     }
     /**
-         * Deserializes the raw data from the GPU buffer based on store metadata.
-         *
-         * @param {StoreMetadata} storeMeta - The metadata of the store.
-         * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
-         * @returns {any} The deserialized data.
-         */
+     * Deserializes the raw data from the GPU buffer based on store metadata.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the store (dataType, typedArrayType, etc.).
+     * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
+     * @returns {any} The deserialized data (JSON, TypedArray, ArrayBuffer, etc.).
+     * @throws {Error} If the dataType is unknown or invalid.
+     */
     deserializeData(storeMeta, copiedData) {
         switch (storeMeta.dataType) {
             case "JSON": {
@@ -1013,13 +829,13 @@ export class VideoDB {
         }
     }
     /**
-    * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
-    *
-    * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
-    * @param {number} bufferIndex - The index of the buffer to retrieve.
-    * @returns {GPUBuffer} The GPU buffer at the specified index.
-    * @throws {Error} If the buffer is not found or is uninitialized.
-    */
+     * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
+     *
+     * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
+     * @param {number} bufferIndex - The index of the buffer to retrieve.
+     * @returns {GPUBuffer} The GPU buffer at the specified index.
+     * @throws {Error} If the buffer is not found or is uninitialized.
+     */
     getBufferByIndex(storeMeta, bufferIndex) {
         const bufMeta = storeMeta.buffers[bufferIndex];
         if (!bufMeta || !bufMeta.gpuBuffer) {
@@ -1045,6 +861,265 @@ export class VideoDB {
             });
             this.flushTimer = null; // Reset the timer handle
         }, 250);
+    }
+    /**
+     * Logs consolidated performance metrics to the console.
+     */
+    logPerformance(initialMetrics, perKeyMetrics) {
+        console.log("** Performance Metrics for getMultiple **", {
+            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
+            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
+            perKeyMetrics: {
+                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+                mapBufferSubsections: {
+                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
+                },
+                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+            },
+        });
+    }
+    /**
+     * Flushes all pending writes, then retrieves the store metadata and key map.
+     * Also tracks performance time for these operations.
+     */
+    async flushAndGetMetadata(storeName) {
+        const performanceMetrics = {
+            flushWrites: 0,
+            metadataRetrieval: 0,
+        };
+        const flushStart = performance.now();
+        await this.flushWrites(); // your method
+        performanceMetrics.flushWrites = performance.now() - flushStart;
+        const metadataStart = performance.now();
+        const storeMeta = this.getStoreMetadata(storeName); // throws if undefined
+        const keyMap = this.getKeyMap(storeName); // throws if undefined
+        performanceMetrics.metadataRetrieval = performance.now() - metadataStart;
+        return { storeMeta, keyMap, metrics: performanceMetrics };
+    }
+    /**
+     * Converts a SQL Server–style LIKE pattern into a RegExp.
+     * Supports the following:
+     *   - % => .*  (any string)
+     *   - _ => .   (any single character)
+     *   - [abc] => [abc] (character class)
+     *   - [^abc] => [^abc] (negated character class)
+     */
+    likeToRegex(pattern) {
+        // Escape special regex chars, except for our placeholders: %, _, [, ]
+        let regexPattern = pattern
+            // Escape backslash first to avoid double-escape issues
+            .replace(/\\/g, "\\\\")
+            // Escape everything else that might conflict with regex
+            .replace(/[.+^${}()|[\]\\]/g, (char) => `\\${char}`)
+            // Convert SQL wildcards into regex equivalents
+            .replace(/%/g, ".*")
+            .replace(/_/g, ".");
+        // Because we escaped '[' and ']' above, we need to revert them
+        // for bracket expressions. We'll do a simple approach:
+        regexPattern = regexPattern.replace(/\\\[(.*?)]/g, "[$1]");
+        // Build final anchored regex
+        return new RegExp(`^${regexPattern}$`, "u"); // "u" (Unicode) can help with extended chars
+    }
+    /**
+     * Expands a single key or wildcard pattern into all matching keys from the key map.
+     * If the string does not contain wildcard characters, returns array with just [key].
+     */
+    expandWildcard(key, keyMap) {
+        // Quick check for wildcard chars. If none, just return [key].
+        if (!/[%_\[\]]/.test(key)) {
+            return [key];
+        }
+        const regex = this.likeToRegex(key);
+        const allStoreKeys = Array.from(keyMap.keys());
+        return allStoreKeys.filter((k) => regex.test(k));
+    }
+    /**
+     * Applies expandWildcard to each item in the array and flattens the result.
+     */
+    expandAllWildcards(keys, keyMap) {
+        // This assumes you’ve created likeToRegex, expandWildcard, etc.
+        return keys.flatMap((key) => this.expandWildcard(key, keyMap));
+    }
+    /**
+     * High-level method to read row data for a list of keys in a single GPU mapAsync call.
+     * Orchestrates all the steps to gather metadata, copy buffers, and deserialize the data.
+     *
+     * @param {string} storeName - The name of the store.
+     * @param {StoreMetadata} storeMeta - The metadata describing the store.
+     * @param {Map<string, any>} keyMap - A mapping of keys to row identifiers.
+     * @param {string[]} keys - The keys for which data is requested.
+     * @returns {Promise<{ results: (any | null)[]; perKeyMetrics: PerKeyMetrics }>}
+     *   An object containing the array of results and collected performance metrics.
+     */
+    async readAllRows(storeName, storeMeta, keyMap, keys) {
+        // Prepare the results array (initialized to null)
+        const results = new Array(keys.length).fill(null);
+        // Metrics structure
+        const perKeyMetrics = this.initializeMetrics();
+        // 1. Collect row metadata for each key
+        const { rowInfos, totalBytes } = this.collectRowInfos(keyMap, storeMeta, keys, results, perKeyMetrics);
+        // Early exit if nothing to read
+        if (rowInfos.length === 0) {
+            return { results, perKeyMetrics };
+        }
+        // 2. Create a single large GPU buffer
+        const bigReadBuffer = this.createBigReadBuffer(totalBytes, perKeyMetrics);
+        // 3. Copy data from each row’s GPU buffer into the large buffer
+        this.copyRowsIntoBigBuffer(rowInfos, storeMeta, bigReadBuffer, perKeyMetrics);
+        // 4. Read all data at once (mapAsync, getMappedRange, unmap)
+        const bigCopiedData = await this.mapAndReadBuffer(bigReadBuffer, perKeyMetrics);
+        // 5. Deserialize each row
+        this.deserializeRows(rowInfos, storeMeta, bigCopiedData, results, perKeyMetrics);
+        // Cleanup the buffer
+        bigReadBuffer.destroy();
+        return { results, perKeyMetrics };
+    }
+    /**
+     * Gathers row metadata (rowInfos) for each provided key.
+     * Also tracks total bytes to be copied.
+     *
+     * @param {Map<string, any>} keyMap - A mapping of keys to row IDs.
+     * @param {StoreMetadata} storeMeta - The store metadata, including rows.
+     * @param {string[]} keys - The list of keys to look up.
+     * @param {(any | null)[]} results - The results array to fill with data.
+     * @param {PerKeyMetrics} perKeyMetrics - The object tracking performance metrics.
+     * @returns {{ rowInfos: RowInfo[], totalBytes: number }} - The row metadata and the total size in bytes.
+     */
+    collectRowInfos(keyMap, storeMeta, keys, results, perKeyMetrics) {
+        const findMetadataStart = performance.now();
+        const rowInfos = [];
+        let totalBytes = 0;
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
+            if (!rowMetadata) {
+                // If row not found, results[i] remains null
+                continue;
+            }
+            rowInfos.push({
+                rowMetadata,
+                rowIndex: i,
+                offsetInFinalBuffer: totalBytes,
+                length: rowMetadata.length,
+            });
+            totalBytes += rowMetadata.length;
+        }
+        perKeyMetrics.findMetadata = performance.now() - findMetadataStart;
+        return { rowInfos, totalBytes };
+    }
+    /**
+    * Creates a single large GPU buffer for reading.
+    * Tracks time in the performance metrics.
+    *
+    * @param {number} totalBytes - The total size in bytes for all row data.
+    * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
+    * @returns {GPUBuffer} The newly created GPU buffer for reading.
+    */
+    createBigReadBuffer(totalBytes, perKeyMetrics) {
+        const createBufferStart = performance.now();
+        const bigReadBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+        perKeyMetrics.createBuffer = performance.now() - createBufferStart;
+        return bigReadBuffer;
+    }
+    /**
+     * Copies data from each row’s GPU buffer into a larger buffer for subsequent read.
+     *
+     * @param {RowInfo[]} rowInfos - Metadata about where each row resides in the final buffer.
+     * @param {StoreMetadata} storeMeta - The store's metadata, including buffer references.
+     * @param {GPUBuffer} bigReadBuffer - The destination GPU buffer for reads.
+     * @param {PerKeyMetrics} perKeyMetrics - Performance metrics object to update.
+     */
+    copyRowsIntoBigBuffer(rowInfos, storeMeta, bigReadBuffer, perKeyMetrics) {
+        const copyBufferStart = performance.now();
+        const commandEncoder = this.device.createCommandEncoder();
+        for (const rowInfo of rowInfos) {
+            const srcBuffer = this.getBufferByIndex(storeMeta, rowInfo.rowMetadata.bufferIndex);
+            commandEncoder.copyBufferToBuffer(srcBuffer, rowInfo.rowMetadata.offset, // source offset
+            bigReadBuffer, rowInfo.offsetInFinalBuffer, // dest offset
+            rowInfo.length);
+        }
+        // Submit the copy commands
+        this.device.queue.submit([commandEncoder.finish()]);
+        perKeyMetrics.copyBuffer = performance.now() - copyBufferStart;
+    }
+    /**
+     * Maps the buffer for reading, copies data to a Uint8Array, and unmaps it.
+     * Updates performance metrics accordingly.
+     *
+     * @param {GPUBuffer} bigReadBuffer - The GPU buffer holding the concatenated row data.
+     * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
+     * @returns {Promise<Uint8Array>} The copied data from the mapped buffer.
+     */
+    async mapAndReadBuffer(bigReadBuffer, perKeyMetrics) {
+        const mapBufferStart = performance.now();
+        // mapAsync
+        const mapAsyncStart = performance.now();
+        await bigReadBuffer.mapAsync(GPUMapMode.READ);
+        perKeyMetrics.mapBufferSubsections.mapAsync = performance.now() - mapAsyncStart;
+        // getMappedRange
+        const getMappedRangeStart = performance.now();
+        const fullMappedRange = bigReadBuffer.getMappedRange();
+        perKeyMetrics.mapBufferSubsections.getMappedRange =
+            performance.now() - getMappedRangeStart;
+        // copyToUint8Array
+        const copyToUint8ArrayStart = performance.now();
+        const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
+        perKeyMetrics.mapBufferSubsections.copyToUint8Array =
+            performance.now() - copyToUint8ArrayStart;
+        // unmap
+        const unmapStart = performance.now();
+        bigReadBuffer.unmap();
+        perKeyMetrics.mapBufferSubsections.unmap = performance.now() - unmapStart;
+        perKeyMetrics.mapBuffer = performance.now() - mapBufferStart;
+        return bigCopiedData;
+    }
+    /**
+     * Deserializes each row from the provided copied data according to the store metadata.
+     * Updates the results array in-place.
+     *
+     * @param {RowInfo[]} rowInfos - Array of metadata about each row location/length.
+     * @param {StoreMetadata} storeMeta - The store's metadata (dataType, typedArrayType, etc.).
+     * @param {Uint8Array} bigCopiedData - The full set of copied row bytes.
+     * @param {(any | null)[]} results - The array where deserialized results are placed.
+     * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
+     */
+    deserializeRows(rowInfos, storeMeta, bigCopiedData, results, perKeyMetrics) {
+        const deserializeStart = performance.now();
+        for (const rowInfo of rowInfos) {
+            const rowSlice = bigCopiedData.subarray(rowInfo.offsetInFinalBuffer, rowInfo.offsetInFinalBuffer + rowInfo.length);
+            // Convert bytes to an object using `deserializeData`
+            results[rowInfo.rowIndex] = this.deserializeData(storeMeta, rowSlice);
+        }
+        perKeyMetrics.deserialize = performance.now() - deserializeStart;
+    }
+    /**
+     * Initializes and returns a fresh PerKeyMetrics object.
+     *
+     * @returns {PerKeyMetrics} - The initialized performance metrics object.
+     */
+    initializeMetrics() {
+        return {
+            findMetadata: 0,
+            createBuffer: 0,
+            copyBuffer: 0,
+            mapBuffer: 0,
+            deserialize: 0,
+            mapBufferSubsections: {
+                mapAsync: 0,
+                getMappedRange: 0,
+                copyToUint8Array: 0,
+                unmap: 0,
+            },
+        };
     }
 }
 //# sourceMappingURL=VideoDB.js.map

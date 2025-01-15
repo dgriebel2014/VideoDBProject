@@ -52,3 +52,10 @@ export interface PerKeyMetrics {
     deserialize: number;
     mapBufferSubsections: MapBufferSubsections;
 }
+
+export type RowInfo = {
+    rowMetadata: RowMetadata;
+    rowIndex: number;
+    offsetInFinalBuffer: number;
+    length: number;
+};
