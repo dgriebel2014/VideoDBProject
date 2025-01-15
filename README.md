@@ -2,7 +2,35 @@
 
 As of this writing, the VideoDB project is less than 72 hours old and remains under active development. Expect rapid changes and frequent updates.
 
-As it turns out, reading data is quite slow (300kb per second).  Also, data put inside a GPU buffer is sandboxed and can't be shared with other applications.  Hopefully you find this usefull despite those issues.
+BENCHMARK RESULTS - NVIDIA RTX 3090 24GB - EACH ROW IS 1KB
+
+PUT
+
+[RESULTS] Stress Test Performance:
+   jsonStress: ADD=92,276 rec/sec, PUT=9,433 rec/sec, DEL=19,513 rec/sec
+   float32Stress: ADD=369,846 rec/sec, PUT=9,948 rec/sec, DEL=19,454 rec/sec
+   float64Stress: ADD=320,723 rec/sec, PUT=9,884 rec/sec, DEL=18,084 rec/sec
+   int32Stress: ADD=374,717 rec/sec, PUT=9,806 rec/sec, DEL=18,616 rec/sec
+   uint8Stress: ADD=425,966 rec/sec, PUT=9,940 rec/sec, DEL=19,257 rec/sec
+[RESULTS] Total Data Transferred (ADD/PUT): 7.78 GB
+
+GET
+
+[TASK] Accuracy Test / GET Benchmark
+[INFO] Successfully created VideoDB instance.
+[STEP] Creating 1 store(s), each with 10000 records...
+[SUCCESS] All stores created and populated.
+[STEP] Verifying accuracy on 1000 random rows (out of 10000)...
+[SUCCESS] All sampled records match exactly! Accuracy confirmed.
+[STEP] Starting SEQUENTIAL GET performance test (3 seconds)...
+[RESULTS] SEQUENTIAL GET: ~301 GETs/sec
+[STEP] Starting RANDOM GET performance test (3 seconds)...
+[RESULTS] RANDOM GET: ~297 GETs/sec
+[STEP] Starting NON-CONTIGUOUS BATCHED GET performance test (3 seconds)...
+[RESULTS] NON-CONTIGUOUS BATCHED GET: ~5,657 GETs/sec
+[STEP] Starting CONTIGUOUS BATCHED GET performance test (3 seconds)...
+[RESULTS] CONTIGUOUS BATCHED GET: ~7,392 GETs/sec
+[INFO] Accuracy Test / GET Benchmark Completed.
 
 # VideoDB
 
