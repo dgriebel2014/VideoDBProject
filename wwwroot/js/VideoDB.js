@@ -158,7 +158,7 @@ export class VideoDB {
     /**
      * Stores or updates data in the specified store without immediately writing to the GPU.
      * Instead, it caches the data in a pending-writes array. Once no writes occur
-     * for 1 second, this method triggers a flush to the GPU.
+     * for 250 ms, this method triggers a flush to the GPU.
      *
      * @param {string} storeName - The name of the object store.
      * @param {string} key - The unique key identifying the row.
@@ -329,16 +329,16 @@ export class VideoDB {
     * }
     */
     async *openCursor(storeName, options) {
-        // 1. Retrieve store metadata and keyMap
+        // Retrieve store metadata and keyMap
         const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
-        // 2. Retrieve all active keys
+        // Retrieve all active keys
         let activeKeys = Array.from(keyMap.keys());
-        // 3. Apply key range filtering if a range is provided
+        // Apply key range filtering if a range is provided
         if (options?.range) {
             activeKeys = this.applyCustomRange(activeKeys, options.range);
         }
-        // 4. Sort keys based on direction
+        // Sort keys based on direction
         if (options?.direction === 'prev') {
             activeKeys.sort((a, b) => this.compareKeys(b, a));
         }
@@ -346,7 +346,7 @@ export class VideoDB {
             // Default to 'next' direction
             activeKeys.sort((a, b) => this.compareKeys(a, b));
         }
-        // 5. Iterate over the sorted, filtered keys and yield records
+        // Iterate over the sorted, filtered keys and yield records
         for (const key of activeKeys) {
             const rowMetadata = keyMap.get(key);
             if (rowMetadata == null) {
@@ -395,7 +395,7 @@ export class VideoDB {
         if (this.pendingWrites.length === 0) {
             return;
         }
-        // 1. Group by GPU buffer
+        // Group by GPU buffer
         const writesByBuffer = new Map();
         for (const item of this.pendingWrites) {
             const { gpuBuffer } = item;
@@ -404,9 +404,9 @@ export class VideoDB {
             }
             writesByBuffer.get(gpuBuffer).push(item);
         }
-        // 2. We'll track which writes succeeded
+        // We'll track which writes succeeded
         const successfulWrites = new Set();
-        // 3. For each GPU buffer, attempt to write
+        // For each GPU buffer, attempt to write
         for (const [gpuBuffer, writeGroup] of writesByBuffer.entries()) {
             // Sort the group by offset
             writeGroup.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
@@ -436,7 +436,7 @@ export class VideoDB {
                 console.error('Error mapping GPU buffer:', mapError);
             }
         }
-        // 4. Remove successful writes from pendingWrites
+        // Remove successful writes from pendingWrites
         this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
     }
     /**
