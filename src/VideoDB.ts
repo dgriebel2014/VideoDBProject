@@ -255,29 +255,27 @@ export class VideoDB {
     }
 
     /**
-     * Retrieves data for a specific key from the GPU-backed store.
-     * Ensures all pending writes are flushed before reading.
-     *
-     * @param {string} storeName - The name of the object store.
-     * @param {string} key - The unique key identifying the row.
-     * @returns {Promise<any | null>} A promise that resolves with the retrieved data or null if not found.
-     * @throws {Error} If the store does not exist.
-     */
+    * Retrieves data for a specific key from the GPU-backed store by utilizing the getMultiple method.
+    * Ensures all pending writes are flushed before reading.
+    *
+    * @param {string} storeName - The name of the object store.
+    * @param {string} key - The unique key identifying the row.
+    * @returns {Promise<any | null>} A promise that resolves with the retrieved data or null if not found.
+    * @throws {Error} If the store does not exist.
+    */
     public async get(storeName: string, key: string): Promise<any | null> {
-        // Ensure all pending writes are flushed before reading
-        await this.flushWrites();
+        // Call getMultiple with a single key
+        const results = await this.getMultiple(storeName, [key]);
 
-        const storeMeta = this.getStoreMetadata(storeName);
-        const keyMap = this.getKeyMap(storeName);
-        const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
+        // Extract the first (and only) result
+        const result = results[0];
 
-        if (!rowMetadata) {
+        // If the result is null, log that the key was not found or is inactive
+        if (result === null) {
             console.log(`Key "${key}" not found or inactive in store "${storeName}".`);
-            return null;
         }
 
-        const data = await this.readDataFromGPU(storeMeta, rowMetadata);
-        return this.deserializeData(storeMeta, data);
+        return result;
     }
 
     /**
