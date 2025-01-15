@@ -1,7 +1,14 @@
-﻿// Copyright © 2025 Jon Griebel. All rights reserved.
+﻿// Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
 // Distributed under the MIT license.
 
-import { StoreMetadata, BufferMetadata, RowMetadata, InitialMetrics, MapBufferSubsections, PerKeyMetrics } from "./types/StoreMetadata";
+import {
+    StoreMetadata,
+    BufferMetadata,
+    RowMetadata,
+    InitialMetrics,
+    MapBufferSubsections,
+    PerKeyMetrics
+} from "./types/StoreMetadata";
 
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
 const ROW_INACTIVE_FLAG = 0x1;
@@ -61,10 +68,8 @@ interface PendingWrite {
 }
 
 /**
- * A simplified VideoDB class that:
- * - Uses 250MB GPU buffers as "chunks."
- * - Never destroys or reclaims space in old buffers.
- * - Stores all metadata in CPU memory.
+ * A VideoDB class that stores all metadata in CPU memory, 
+ * and actual data on the GPU
  */
 export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
@@ -120,7 +125,7 @@ export class VideoDB {
         }
 
         const storeMetadata: StoreMetadata = {
-            storeName, // Assign storeName here
+            storeName,
             dataType: options.dataType,
             typedArrayType: options.typedArrayType,
             bufferSize: options.bufferSize,
@@ -270,11 +275,6 @@ export class VideoDB {
         // Extract the first (and only) result
         const result = results[0];
 
-        // If the result is null, log that the key was not found or is inactive
-        if (result === null) {
-            console.log(`Key "${key}" not found or inactive in store "${storeName}".`);
-        }
-
         return result;
     }
 
@@ -288,16 +288,21 @@ export class VideoDB {
      * @returns {Promise<(any|null)[]>} An array of deserialized data, matching the input order.
      */
     public async getMultiple(storeName: string, keys: string[]): Promise<(any | null)[]> {
-        // 1. Flush & retrieve store metadata
+        // Flush & retrieve store metadata
         const { storeMeta, keyMap, metrics } = await this.flushAndGetMetadata(storeName);
 
-        // 2. Expand any wildcard patterns
+        // Expand any wildcard patterns
         const expandedKeys = this.expandAllWildcards(keys, keyMap);
 
-        // 3. Read rows
-        const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
+        // One readAllRows call that does exactly ONE mapAsync
+        const { results, perKeyMetrics } = await this.readAllRows(
+            storeName,
+            storeMeta,
+            keyMap,
+            expandedKeys
+        );
 
-        // 4. Log performance
+        // Log or accumulate performance
         this.logPerformance(metrics, perKeyMetrics);
 
         return results;
@@ -380,8 +385,8 @@ export class VideoDB {
     }
 
     /**
-     * Reads row data for a list of keys. Returns both the results array and
-     * cumulative per-key performance metrics.
+     * Reads row data for a list of keys in a SINGLE GPU mapAsync call.
+     * Returns both the results array and cumulative performance metrics.
      */
     private async readAllRows(
         storeName: string,
@@ -389,7 +394,7 @@ export class VideoDB {
         keyMap: Map<string, any>,
         keys: string[]
     ): Promise<{ results: (any | null)[]; perKeyMetrics: PerKeyMetrics }> {
-
+        // Prepare results array
         const results = new Array<(any | null)>(keys.length).fill(null);
 
         // Initialize aggregated metrics
@@ -407,124 +412,123 @@ export class VideoDB {
             },
         };
 
+        // Find row metadata for all keys
+        const findMetadataStart = performance.now();
+
+        // We’ll store each row’s metadata in an array of objects:
+        //   { rowMetadata, rowIndex, offsetInFinalBuffer, length }
+        type RowInfo = {
+            rowMetadata: RowMetadata;
+            rowIndex: number;  // which position in the results array
+            offsetInFinalBuffer: number;
+            length: number;
+        };
+
+        const rowInfos: RowInfo[] = [];
+        let totalBytes = 0;
+
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
-            const { value, metrics: singleKeyMetrics, mapBufferMetrics } =
-                await this.getOneRow(storeName, storeMeta, keyMap, key);
+            const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
 
-            // Place value
-            results[i] = value;
+            // If row not found, results[i] remains null
+            if (!rowMetadata) {
+                continue;
+            }
 
-            // Accumulate metrics
-            perKeyMetrics.findMetadata += singleKeyMetrics.findMetadata;
-            perKeyMetrics.createBuffer += singleKeyMetrics.createBuffer;
-            perKeyMetrics.copyBuffer += singleKeyMetrics.copyBuffer;
-            perKeyMetrics.mapBuffer += singleKeyMetrics.mapBuffer;
-            perKeyMetrics.deserialize += singleKeyMetrics.deserialize;
+            // Track this row
+            rowInfos.push({
+                rowMetadata,
+                rowIndex: i,
+                offsetInFinalBuffer: totalBytes,
+                length: rowMetadata.length,
+            });
 
-            perKeyMetrics.mapBufferSubsections.mapAsync += mapBufferMetrics.mapAsync;
-            perKeyMetrics.mapBufferSubsections.getMappedRange += mapBufferMetrics.getMappedRange;
-            perKeyMetrics.mapBufferSubsections.copyToUint8Array += mapBufferMetrics.copyToUint8Array;
-            perKeyMetrics.mapBufferSubsections.unmap += mapBufferMetrics.unmap;
+            // Accumulate total size
+            totalBytes += rowMetadata.length;
         }
 
-        return { results, perKeyMetrics };
-    }
+        perKeyMetrics.findMetadata = performance.now() - findMetadataStart;
 
-    /**
-     * Reads a single row from the store, including GPU copy and deserialization.
-     * Returns the row's value (or null) plus timing metrics.
-     */
-    private async getOneRow(
-        storeName: string,
-        storeMeta: StoreMetadata,
-        keyMap: Map<string, any>,
-        key: string
-    ): Promise<{
-        value: any | null;
-        metrics: Omit<PerKeyMetrics, "mapBufferSubsections">;
-        mapBufferMetrics: MapBufferSubsections;
-    }> {
-        // Partial metrics for a single key
-        const metrics = {
-            findMetadata: 0,
-            createBuffer: 0,
-            copyBuffer: 0,
-            mapBuffer: 0,
-            deserialize: 0,
-        };
-        const mapBufferMetrics: MapBufferSubsections = {
-            mapAsync: 0,
-            getMappedRange: 0,
-            copyToUint8Array: 0,
-            unmap: 0,
-        };
-
-        // 1. Find row metadata
-        const findMetadataStart = performance.now();
-        const rowMetadata: RowMetadata | null | undefined =
-            this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
-        metrics.findMetadata = performance.now() - findMetadataStart;
-
-        if (!rowMetadata) {
-            return { value: null, metrics, mapBufferMetrics };
+        // If no rows found, return early
+        if (rowInfos.length === 0) {
+            return { results, perKeyMetrics };
         }
 
-        // 2. Create read buffer
+        // Create a single GPU buffer large enough for all rows
         const createBufferStart = performance.now();
-        const readBuffer = this.device.createBuffer({
-            size: rowMetadata.length,
+        const bigReadBuffer = this.device.createBuffer({
+            size: totalBytes,
             usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
-        metrics.createBuffer = performance.now() - createBufferStart;
+        perKeyMetrics.createBuffer = performance.now() - createBufferStart;
 
-        // 3. Copy GPU buffer data
+        // Copy from each row’s GPU buffer into our big buffer
         const copyBufferStart = performance.now();
         const commandEncoder = this.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex), // source
-            rowMetadata.offset,
-            readBuffer,
-            0,
-            rowMetadata.length
-        );
-        this.device.queue.submit([commandEncoder.finish()]);
-        metrics.copyBuffer = performance.now() - copyBufferStart;
 
-        // 4. Map buffer (with sub-metrics)
+        for (const rowInfo of rowInfos) {
+            const src = this.getBufferByIndex(storeMeta, rowInfo.rowMetadata.bufferIndex);
+            commandEncoder.copyBufferToBuffer(
+                src,
+                rowInfo.rowMetadata.offset,      // source offset
+                bigReadBuffer,
+                rowInfo.offsetInFinalBuffer,     // dest offset
+                rowInfo.length
+            );
+        }
+        this.device.queue.submit([commandEncoder.finish()]);
+        perKeyMetrics.copyBuffer = performance.now() - copyBufferStart;
+
+        // Map once, read data, unmap once
         const mapBufferStart = performance.now();
 
-        // 4a. mapAsync
+        // mapAsync
         const mapAsyncStart = performance.now();
-        await readBuffer.mapAsync(GPUMapMode.READ);
-        mapBufferMetrics.mapAsync = performance.now() - mapAsyncStart;
+        await bigReadBuffer.mapAsync(GPUMapMode.READ);
+        perKeyMetrics.mapBufferSubsections.mapAsync = performance.now() - mapAsyncStart;
 
-        // 4b. getMappedRange
+        // getMappedRange
         const getMappedRangeStart = performance.now();
-        const mappedRange = readBuffer.getMappedRange(0, rowMetadata.length);
-        mapBufferMetrics.getMappedRange = performance.now() - getMappedRangeStart;
+        const fullMappedRange = bigReadBuffer.getMappedRange();
+        perKeyMetrics.mapBufferSubsections.getMappedRange = performance.now() - getMappedRangeStart;
 
-        // 4c. Copy data
+        // copyToUint8Array
         const copyToUint8ArrayStart = performance.now();
-        const copiedData = new Uint8Array(mappedRange.slice(0));
-        mapBufferMetrics.copyToUint8Array = performance.now() - copyToUint8ArrayStart;
+        // If you want the entire copy: const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
+        // But it can be more efficient to slice per row. We'll do a single copy anyway:
+        const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
+        perKeyMetrics.mapBufferSubsections.copyToUint8Array = performance.now() - copyToUint8ArrayStart;
 
-        // 4d. unmap
+        // unmap
         const unmapStart = performance.now();
-        readBuffer.unmap();
-        mapBufferMetrics.unmap = performance.now() - unmapStart;
+        bigReadBuffer.unmap();
+        perKeyMetrics.mapBufferSubsections.unmap = performance.now() - unmapStart;
 
-        metrics.mapBuffer = performance.now() - mapBufferStart;
+        perKeyMetrics.mapBuffer = performance.now() - mapBufferStart;
 
-        // 5. Deserialize
+        // Deserialize each row chunk
         const deserializeStart = performance.now();
-        const deserialized = this.deserializeData(storeMeta, copiedData);
-        metrics.deserialize = performance.now() - deserializeStart;
+        for (const rowInfo of rowInfos) {
+            // Each row's data is located in bigCopiedData from
+            // rowInfo.offsetInFinalBuffer to offsetInFinalBuffer+length
+            const rowSlice = bigCopiedData.subarray(
+                rowInfo.offsetInFinalBuffer,
+                rowInfo.offsetInFinalBuffer + rowInfo.length
+            );
 
-        // 6. Cleanup
-        readBuffer.destroy();
+            // Convert bytes to object
+            const deserialized = this.deserializeData(storeMeta, rowSlice);
 
-        return { value: deserialized, metrics, mapBufferMetrics };
+            // Store in results
+            results[rowInfo.rowIndex] = deserialized;
+        }
+        perKeyMetrics.deserialize = performance.now() - deserializeStart;
+
+        // Cleanup
+        bigReadBuffer.destroy();
+
+        return { results, perKeyMetrics };
     }
 
     /**
@@ -560,23 +564,22 @@ export class VideoDB {
      * @throws {Error} If the store does not exist.
      */
     public async delete(storeName: string, key: string): Promise<void> {
-        // 1. Retrieve store metadata and key map
+        // Retrieve store metadata and key map
         const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
 
-        // 2. Find row metadata for the active row
+        // Find row metadata for the active row
         const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
         if (!rowMetadata) {
-            console.log(`Key "${key}" not found or already inactive in store "${storeName}".`);
             return;
         }
 
-        // 3. Create a zeroed ArrayBuffer to overwrite the row data (optional)
+        // Create a zeroed ArrayBuffer to overwrite the row data (optional)
         const zeroedArrayBuffer = new ArrayBuffer(rowMetadata.length);
         const zeroedView = new Uint8Array(zeroedArrayBuffer);
         zeroedView.fill(0); // Optional: Fill with zeros for "true" deletion
 
-        // 4. Queue the delete operation as a pending write
+        // Queue the delete operation as a pending write
         this.pendingWrites.push({
             storeMeta,
             rowMetadata,
@@ -586,10 +589,10 @@ export class VideoDB {
             key // Include the key for metadata updates during flush
         });
 
-        // 5. Reset the flush timer
+        // Reset the flush timer
         this.resetFlushTimer();
 
-        // 6. Check if batch size threshold is met
+        // Check if batch size threshold is met
         await this.checkAndFlush();
     }
 
@@ -602,31 +605,31 @@ export class VideoDB {
      * @throws {Error} If the specified store does not exist.
      */
     public clear(storeName: string): void {
-        // 1. Retrieve store metadata and keyMap
+        // Retrieve store metadata and keyMap
         const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
 
-        // 2. Discard all row metadata
+        // Discard all row metadata
         storeMeta.rows = [];
 
-        // 3. Destroy all existing GPU buffers
+        // Destroy all existing GPU buffers
         for (const bufferMeta of storeMeta.buffers) {
             if (bufferMeta.gpuBuffer) {
                 bufferMeta.gpuBuffer.destroy();
             }
         }
 
-        // 4. Clear the array of buffers
+        // Clear the array of buffers
         storeMeta.buffers = [];
 
-        // 5. Recreate a single new GPU buffer (index = 0)
+        // Recreate a single new GPU buffer (index = 0)
         const newGpuBuffer = this.device.createBuffer({
             size: storeMeta.bufferSize,
             usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
             mappedAtCreation: false
         });
 
-        // 6. Add the newly created buffer to the store's metadata
+        // Add the newly created buffer to the store's metadata
         storeMeta.buffers.push({
             bufferIndex: 0,
             startRow: -1,
@@ -634,13 +637,11 @@ export class VideoDB {
             gpuBuffer: newGpuBuffer
         });
 
-        // 7. Clear the keyMap so there are no active keys
+        // Clear the keyMap so there are no active keys
         keyMap.clear();
 
-        // 8. Update store metadata and version
+        // Update store metadata and version
         this.updateStoreMetadata(storeMeta);
-
-        console.log(`Cleared store "${storeName}", destroyed all GPU buffers, and recreated one fresh buffer.`);
     }
 
     /**
@@ -905,37 +906,6 @@ export class VideoDB {
     }
 
     /**
-     * Overwrites the GPU buffer region for the specified row with zeros.
-     * This effectively wipes out the data in GPU memory for that row.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the store containing the GPU buffer.
-     * @param {RowMetadata} rowMetadata - The metadata for the row to be wiped.
-     * @returns {Promise<void>} A promise that resolves once the wipe operation completes.
-     */
-    private async wipeRowDataInGPU(
-        storeMeta: StoreMetadata,
-        rowMetadata: RowMetadata
-    ): Promise<void> {
-        try {
-            const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
-            const zeroArray = new ArrayBuffer(rowMetadata.length);
-            await this.writeDataToBuffer(gpuBuffer, rowMetadata.offset, zeroArray);
-        } catch (error) {
-            console.error(`Error zeroing out data for rowId=${rowMetadata.rowId}:`, error);
-        }
-    }
-
-    /**
-     * Marks the given row as inactive in CPU metadata (e.g., logically deleted).
-     *
-     * @param {RowMetadata} rowMetadata - The metadata for the row to be marked inactive.
-     * @returns {void}
-     */
-    private markRowInactive(rowMetadata: RowMetadata): void {
-        rowMetadata.flags = (rowMetadata.flags ?? 0) | ROW_INACTIVE_FLAG;
-    }
-
-    /**
      * Updates the store metadata to indicate that a change has occurred.
      * This increments the metadata version and sets the `dirtyMetadata` flag.
      *
@@ -959,33 +929,6 @@ export class VideoDB {
             throw new Error(`Object store "${storeName}" does not exist.`);
         }
         return meta;
-    }
-
-    /**
-     * Retrieves the row metadata for a specific key from the given store.
-     * Ensures that the row is active and exists in the store.
-     * 
-     * @param {StoreMetadata} storeMeta - The metadata of the store containing the row.
-     * @param {Map<string, number>} keyMap - The map of keys to row IDs.
-     * @param {string} key - The unique key identifying the row.
-     * @returns {RowMetadata | null} The metadata for the row, or null if not found.
-     */
-    private getRowMetadataForKey(
-        storeMeta: StoreMetadata,
-        keyMap: Map<string, number>,
-        key: string
-    ): RowMetadata | null {
-        const rowId = keyMap.get(key);
-        if (rowId == null) {
-            return null;
-        }
-
-        const rowMetadata = storeMeta.rows.find((r) => r.rowId === rowId);
-        if (!rowMetadata || (rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
-            return null;
-        }
-
-        return rowMetadata;
     }
 
     /**
@@ -1324,66 +1267,6 @@ export class VideoDB {
     }
 
     /**
-     * Completes a write operation by writing data again for alignment and updating row metadata.
-     * @param storeMeta - The metadata of the target store.
-     * @param rowMetadata - The row metadata associated with the current write.
-     * @param arrayBuffer - The serialized data to be written.
-     * @param gpuBuffer - The target GPU buffer to be written to.
-     * @returns A promise that resolves once the aligned write is completed and metadata is updated.
-     */
-    private async finalizeWrite(
-        storeMeta: StoreMetadata,
-        rowMetadata: RowMetadata,
-        arrayBuffer: ArrayBuffer,
-        gpuBuffer: GPUBuffer
-    ): Promise<void> {
-        const alignedLength = await this.writeDataToBuffer(gpuBuffer, rowMetadata.offset, arrayBuffer);
-        rowMetadata.length = alignedLength;
-        storeMeta.dirtyMetadata = true;
-        storeMeta.metadataVersion += 1;
-    }
-
-    /**
-     * Reads data from the GPU buffer based on row metadata.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store.
-     * @param {RowMetadata} rowMetadata - The row metadata specifying which buffer/offset to read.
-     * @returns {Promise<Uint8Array>} A promise resolving to a Uint8Array containing the copied data.
-     */
-    private async readDataFromGPU(
-        storeMeta: StoreMetadata,
-        rowMetadata: RowMetadata
-    ): Promise<Uint8Array> {
-        const chunkBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
-
-        // 1. Create a read buffer for GPU → CPU transfer
-        const readBuffer = this.device.createBuffer({
-            size: rowMetadata.length,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-        });
-
-        // 2. Copy data from the chunk buffer into readBuffer
-        const commandEncoder = this.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            chunkBuffer,          // Source buffer
-            rowMetadata.offset,
-            readBuffer,           // Destination buffer
-            0,
-            rowMetadata.length
-        );
-        this.device.queue.submit([commandEncoder.finish()]);
-
-        // 3. Map the read buffer to access the data
-        await readBuffer.mapAsync(GPUMapMode.READ);
-        const mappedRange = readBuffer.getMappedRange(0, rowMetadata.length);
-
-        // 4. Copy out the data before unmapping
-        const copiedData = new Uint8Array(mappedRange.slice(0));
-        readBuffer.unmap();
-
-        return copiedData;
-    }
-    /**
          * Deserializes the raw data from the GPU buffer based on store metadata.
          *
          * @param {StoreMetadata} storeMeta - The metadata of the store.
@@ -1435,50 +1318,6 @@ export class VideoDB {
     }
 
     /**
-     * Writes data to the specified GPU buffer at a given offset, ensuring
-     * the data is aligned to 4-byte boundaries.
-     * 
-     * @param {GPUBuffer} gpuBuffer - The GPU buffer to write to.
-     * @param {number} offset - The offset in the buffer where the data will be written.
-     * @param {ArrayBuffer} arrayBuffer - The data to write to the buffer.
-     * @returns {Promise<number>} The length of the data written (aligned size).
-     * @throws {Error} If the write operation fails.
-     */
-    private async writeDataToBuffer(
-        gpuBuffer: GPUBuffer,
-        offset: number,
-        arrayBuffer: ArrayBuffer
-    ): Promise<number> {
-        // --- 4-byte alignment fix ---
-        const remainder = arrayBuffer.byteLength % 4;
-        if (remainder !== 0) {
-            // Create a padded copy
-            const needed = 4 - remainder;
-            const padded = new Uint8Array(arrayBuffer.byteLength + needed);
-            padded.set(new Uint8Array(arrayBuffer), 0);
-            arrayBuffer = padded.buffer;
-        }
-
-        console.log("Buffer size:", gpuBuffer.size);
-        console.log("Offset:", offset, "Write length:", arrayBuffer.byteLength);
-
-        try {
-            await gpuBuffer.mapAsync(GPUMapMode.WRITE);
-            console.log("Buffer successfully mapped.");
-
-            const mappedRange = gpuBuffer.getMappedRange(offset, arrayBuffer.byteLength);
-            new Uint8Array(mappedRange).set(new Uint8Array(arrayBuffer));
-            gpuBuffer.unmap();
-            console.log("Data successfully written to GPU buffer.");
-        } catch (err) {
-            console.error("Error writing to GPU buffer:", err);
-            throw err;
-        }
-
-        return arrayBuffer.byteLength; // new padded length
-    }
-
-    /**
      * Resets the flush timer to delay writing pending operations to the GPU.
      * If a timer is already set, it clears it and starts a new one.
      * 
@@ -1496,6 +1335,6 @@ export class VideoDB {
                 console.error('Error during timed flushWrites:', error);
             });
             this.flushTimer = null; // Reset the timer handle
-        }, 250); // 250 ms
+        }, 250);
     }
 }
