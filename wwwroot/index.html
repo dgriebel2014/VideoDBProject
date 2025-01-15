@@ -1697,6 +1697,56 @@ console.log("First matching vector:", firstMatchingVector);
     </li>
 </ul><br />
 
+<!-- getMultiple -->
+<h3><code style="font-size:larger;">getMultiple(storeName, keys)</code></h3><br />
+<hr style="margin-top:-10px;">
+
+<ul>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <ul>
+            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+            <li><code>keys</code> (<code>string[]</code>): The array of keys or wildcard patterns to read.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;(any | null)[]&gt;</code>:
+        An array of deserialized data objects, in the same order as the <em>expanded</em> set of keys. If a key (or wildcard expansion) is not found or inactive, the array item is <code>null</code>.
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">SQL Wildcards</strong>
+        <p>This method supports SQL Server–style <code>LIKE</code> patterns in the <code>keys</code> parameter. Each pattern is expanded to all matching keys in the store. The list of expanded keys is used for a single bulk read operation.</p>
+        <ul>
+            <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
+            <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
+            <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+            <li><code>[^abc]</code> matches any single character <em>not</em> in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+        </ul>
+        <p>These patterns must match the entire key from start to finish. If no actual keys match a wildcard, the corresponding element in the results array is <code>null</code>.</p>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+        <ul>
+            <li>Flushes any pending writes to avoid stale data.</li>
+            <li>Expands all wildcard patterns into concrete keys before a single GPU <code>mapAsync</code> operation.</li>
+            <li>Deserializes each row based on <code>storeMeta.dataType</code> and returns them in an array, preserving the expanded key order.</li>
+            <li>Any row not found or not active is <code>null</code>.</li>
+        </ul>
+    </li>
+    <li>
+        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+        <pre><code>// Retrieving multiple specific keys
+const items = await videoDB.getMultiple("embeddingStore", ["vector:001", "vector:002"]);
+console.log("Results:", items);
+
+// Using wildcard patterns
+const wildcardItems = await videoDB.getMultiple("embeddingStore", ["vector:%", "config:%"]);
+console.log("Wildcard results:", wildcardItems);
+        </code></pre>
+    </li>
+</ul><br />
+
 <!-- delete -->
 <h3><code style="font-size:larger;">delete(storeName, key)</code></h3><br />
 <hr style="margin-top:-10px;">
