@@ -146,10 +146,12 @@
             }
         </script>
         <br /><br />
-        <b>Copyright © 2025 Jon Griebel - dgriebel2014@gmail.com. All rights reserved.  Distributed under the MIT license.</b>&nbsp;
+        <b style="padding-bottom:10px;">Copyright © 2025 Jon Griebel - dgriebel2014@gmail.com. All rights reserved.  Distributed under the MIT license.</b>
         <br />
-        <i style="font-size:small">Chat GPT o1ProMode by OpenAI assisted with the development of the code, documentation and the demo page for this class.</i>
-    </p>
+        
+        <p style="font-style:italic; font-size:smaller; padding-top:5px;"> 
+            ChatGPT o1 pro by OpenAI assisted with the development of the code, documentation and the demo page for this class.
+        </p>
     <br />
     <p>
         Select a link in the first panel to view console logs (middle panel) and the corresponding code snippets (right panel).
@@ -157,6 +159,7 @@
     <br />
 
     <div class="container">
+        <!-- Left Panel: List of tasks/links -->
         <!-- Left Panel: List of tasks/links -->
         <div class="panel-left">
             <h2>VideoDB Tasks</h2>
@@ -192,6 +195,31 @@
                 </li>
 
                 <li>
+                    <a href="#" data-task="consumePublicData">Consume Public JSON Datasets</a>
+                    <span class="task-description">
+                        Fetch a JSON dataset, convert rows to JSON objects, store them in VideoDB and display.
+                    </span>
+                    <br />
+                    <!-- Submenu for Consume Public JSON Datasets -->
+                    <div style="text-align:left; padding-left:50px;">
+                        <ul class="submenu" style="font-size:smaller; padding:0px;">
+                            <li>
+                                <a class="submenu-button" data-task="powerballNumbers">Lottery Powerball Winning Numbers: Beginning 2010</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="mentalHealthCare">Mental Health Care in the Last 4 Weeks</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="anxietyDepressionIndicators">Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms During Last 7 Days</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="globalLandslideCatalog">Global Landslide Catalog Export</a>
+                            </li>
+                        </ul>
+                    </div>
+                </li>
+
+                <li>
                     <a href="#" data-task="classDocs">Class Documentation</a>
                     <span class="task-description">View the complete VideoDB class docs in the right pane.</span>
                 </li>
@@ -214,6 +242,7 @@
                 <p>No code to show. Select a task from the left panel.</p>
             </div>
         </div>
+        <hr />
     </div>
 
     <!-- Updated script block -->
@@ -279,10 +308,14 @@
         let device = null;
 
         /**
-         * Initializes the page by attaching event listeners for each task link.
-         * @returns {Promise<void>}
-         */
+        * Updated initDemoPage()
+        * - Added new case statements for the child links:
+        *   "powerballNumbers", "mentalHealthCare",
+        *   "anxietyDepressionIndicators", "globalLandslideCatalog".
+        * - Now, clicking "consumePublicData" does nothing.
+        */
         async function initDemoPage() {
+            clearConsole();
             // Attach event listeners for each link with a data-task attribute
             const taskLinks = document.querySelectorAll('.task-list a[data-task]');
             taskLinks.forEach(link => {
@@ -291,7 +324,9 @@
                     const task = link.getAttribute('data-task');
 
                     // Clear both console and code pane before each new task
-                    clearConsole();
+                    if (task !== 'powerballNumbers' && task !== 'mentalHealthCare' && task !== 'anxietyDepressionIndicators' && task !== 'globalLandslideCatalog') {
+                        clearConsole();
+                    }
                     clearCodePane();
 
                     switch (task) {
@@ -313,6 +348,26 @@
                         case 'accuracyTest':
                             await accuracyTest();
                             break;
+
+                        // The parent "consumePublicData" does nothing now
+                        case 'consumePublicData':
+                            // intentionally left empty
+                            break;
+
+                        // Child links trigger dataset fetch/store
+                        case 'powerballNumbers':
+                            await handlePublicJson('powerballNumbers');
+                            break;
+                        case 'mentalHealthCare':
+                            await handlePublicJson('mentalHealthCare');
+                            break;
+                        case 'anxietyDepressionIndicators':
+                            await handlePublicJson('anxietyDepressionIndicators');
+                            break;
+                        case 'globalLandslideCatalog':
+                            await handlePublicJson('globalLandslideCatalog');
+                            break;
+
                         default:
                             logToConsole(`[ERROR] Unknown task: ${task}`);
                             break;
@@ -386,7 +441,7 @@ if (!adapter) {<br />
 device = await adapter.requestDevice();<br />
 videoDB = new VideoDB(device);<br /><br />
 </code>
-                `);
+                    `);
         }
 
         /**
@@ -486,7 +541,7 @@ await videoDB.put("${storeName}", "${key}", updatedData);<br /><br />
                 `<code>
 <b style='color:green;'>// [STEP] OpenCursor to view all keys/values</b><br />
 for await (const record of videoDB.openCursor("${storeName}")) {
-    console.log(record.key, record.value);
+        console.log(record.key, record.value);
 }<br /><br />
 </code>`
             );
@@ -744,26 +799,24 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                     logToConsole(`[ERROR] Found ${mismatches} mismatches in sampled data retrieval! Check logs above.\n`);
                 }
 
-                // ===========================
-                // 5) GET PERFORMANCE MEASUREMENT
-                // ===========================
+                // GET PERFORMANCE MEASUREMENT
 
-                // (A) SEQUENTIAL GET
+                // SEQUENTIAL GET
                 logToConsole("[STEP] Starting SEQUENTIAL GET performance test (3 seconds)...");
                 const seqRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/false);
                 logToConsole(`[RESULTS] SEQUENTIAL GET: ~${seqRate.toLocaleString()} GETs/sec\n`);
 
-                // (B) RANDOM GET
+                // RANDOM GET
                 logToConsole("[STEP] Starting RANDOM GET performance test (3 seconds)...");
                 const randRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/true);
                 logToConsole(`[RESULTS] RANDOM GET: ~${randRate.toLocaleString()} GETs/sec\n`);
 
-                // (C1) NON-CONTIGUOUS BATCHED GET (shuffled)
+                // NON-CONTIGUOUS BATCHED GET (shuffled)
                 logToConsole("[STEP] Starting NON-CONTIGUOUS BATCHED GET performance test (3 seconds)...");
                 const batchRateNonContiguous = await measureNonContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
                 logToConsole(`[RESULTS] NON-CONTIGUOUS BATCHED GET: ~${batchRateNonContiguous.toLocaleString()} GETs/sec\n`);
 
-                // (C2) CONTIGUOUS BATCHED GET (in insertion order)
+                // CONTIGUOUS BATCHED GET (in insertion order)
                 logToConsole("[STEP] Starting CONTIGUOUS BATCHED GET performance test (3 seconds)...");
                 const batchRateContiguous = await measureContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
                 logToConsole(`[RESULTS] CONTIGUOUS BATCHED GET: ~${batchRateContiguous.toLocaleString()} GETs/sec\n`);
@@ -773,9 +826,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                 logToConsole(`[ERROR] ${err.message}`);
             }
 
-            // ---------------------------------
             // Helper: Compare two values (Float32Array or JSON) for accuracy
-            // ---------------------------------
             function compareValues(expected, actual) {
                 if (expected instanceof Float32Array && actual instanceof Float32Array) {
                     if (expected.length !== actual.length) return false;
@@ -962,7 +1013,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
          * Measures batched GET operations per second for a specified duration.
          * Groups all keys by store, then repeatedly calls `videoDB.getMultiple()` for
          * only some fraction (e.g. 10%) of that store’s rows in a **non-contiguous** fashion.
-         * 
+         *
          * NOTE: Keys are shuffled upfront (non-contiguous reading).
          *
          * @param {Array<{storeName: string, key: string}>} dataMap - The array of stored records.
@@ -1010,7 +1061,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             return Math.round(totalRecordsRead / elapsed);
         }
 
-        /** 
+        /**
          * Simple array shuffle (Durstenfeld/Fisher-Yates)
          */
         function shuffleArray(arr) {
@@ -1039,17 +1090,17 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
 <code>
 <b style="color:green;">// Create 'existingStore' twice<br /></b>
 videoDB.createObjectStore("existingStore", {<br />
-    dataType: "JSON",<br />
-    bufferSize: 256,<br />
-    totalRows: 1<br />
+        dataType: "JSON",<br />
+        bufferSize: 256,<br />
+        totalRows: 1<br />
 });<br />
 videoDB.createObjectStore("existingStore", {<br />
-    dataType: "JSON",<br />
-    bufferSize: 256,<br />
-    totalRows: 1<br />
+        dataType: "JSON",<br />
+        bufferSize: 256,<br />
+        totalRows: 1<br />
 });<br />
 </code><br />
-    `);
+        `);
             try {
                 videoDB.createObjectStore("existingStore", {
                     dataType: "JSON",
@@ -1073,12 +1124,12 @@ videoDB.createObjectStore("existingStore", {<br />
 <code>
 <b style="color:green;">// Omit 'typedArrayType' in a TypedArray store<br /></b>
 videoDB.createObjectStore("badTypedArrayStore", {<br />
-    dataType: "TypedArray",<br />
-    bufferSize: 1024,<br />
-    totalRows: 10<br />
+        dataType: "TypedArray",<br />
+        bufferSize: 1024,<br />
+        totalRows: 10<br />
 });<br />
 </code><br />
-    `);
+        `);
             try {
                 videoDB.createObjectStore("badTypedArrayStore", {
                     dataType: "TypedArray",
@@ -1097,14 +1148,14 @@ videoDB.createObjectStore("badTypedArrayStore", {<br />
 <code>
 <b style="color:green;">// Duplicate key "testKey" using 'add'<br /></b>
 videoDB.createObjectStore("uniqueKeysOnly", {<br />
-    dataType: "JSON",<br />
-    bufferSize: 1024,<br />
-    totalRows: 5<br />
+        dataType: "JSON",<br />
+        bufferSize: 1024,<br />
+        totalRows: 5<br />
 });<br />
 await videoDB.add("uniqueKeysOnly", "testKey", { val: 1 });<br />
 await videoDB.add("uniqueKeysOnly", "testKey", { val: 2 });<br />
 </code><br />
-    `);
+        `);
             try {
                 videoDB.createObjectStore("uniqueKeysOnly", {
                     dataType: "JSON",
@@ -1125,14 +1176,14 @@ await videoDB.add("uniqueKeysOnly", "testKey", { val: 2 });<br />
 <code>
 <b style="color:green;">// Attempt to store non-float data in a Float32Array store<br /></b>
 videoDB.createObjectStore("floatStore", {<br />
-    dataType: "TypedArray",<br />
-    typedArrayType: "Float32Array",<br />
-    bufferSize: 1024,<br />
-    totalRows: 5<br />
+        dataType: "TypedArray",<br />
+        typedArrayType: "Float32Array",<br />
+        bufferSize: 1024,<br />
+        totalRows: 5<br />
 });<br />
 await videoDB.put("floatStore", "wrongData", { not: "a float array" });<br />
 </code><br />
-    `);
+        `);
             try {
                 videoDB.createObjectStore("floatStore", {
                     dataType: "TypedArray",
@@ -1153,10 +1204,10 @@ await videoDB.put("floatStore", "wrongData", { not: "a float array" });<br />
 <code>
 <b style="color:green;">// Attempt to open a cursor on non-existing "fakeCursorStore"<br /></b>
 for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
-    // ...<br />
+        // ...<br />
 }<br />
 </code><br />
-    `);
+        `);
             try {
                 for await (const record of videoDB.openCursor("fakeCursorStore")) {
                     // Not expected to reach here
@@ -1173,7 +1224,7 @@ for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
 <b style="color:green;">// Attempt to clear a non-existing "reallyFakeStore"<br /></b>
 videoDB.clear("reallyFakeStore");<br />
 </code><br />
-    `);
+        `);
             try {
                 videoDB.clear("reallyFakeStore");
             } catch (err) {
@@ -1221,7 +1272,7 @@ videoDB.clear("reallyFakeStore");<br />
 // 3. Output records/sec for each operation.<br />
 // 4. Display total data transferred.<br />
 </code>
-    `);
+        `);
 
             // Make sure we have a GPU device
             if (!device || !videoDB) {
@@ -1445,42 +1496,42 @@ videoDB.clear("reallyFakeStore");<br />
 <h1>VideoDB Class Documentation</h1><br />
 
 <p>
-    The <code>VideoDB</code> class provides functionality for managing object stores with
-    <strong>CPU-based metadata</strong>. Each object store can represent a collection of key-value
-    pairs (or “rows”), fully tracked on the CPU, while the actual row data resides in GPU buffers
-    for efficiency. This class implements a deferred-write approach to minimize the overhead of
-    frequent GPU operations.
+        The <code>VideoDB</code> class provides functionality for managing object stores with
+        <strong>CPU-based metadata</strong>. Each object store can represent a collection of key-value
+        pairs (or “rows”), fully tracked on the CPU, while the actual row data resides in GPU buffers
+        for efficiency. This class implements a deferred-write approach to minimize the overhead of
+        frequent GPU operations.
 </p><br />
 
 <hr /><br />
 
 <h2>Constructor</h2><br />
 
-<h3><code style="font-size:larger;">constructor(device)</code></h3><br />
+<h3><code style="font-size:xx-large;">constructor(device)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li>
-                <code>device</code> (<code>GPUDevice</code>):
-                The WebGPU device instance used to allocate GPU buffers.
-            </li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        Initializes internal data structures for CPU-based metadata
-        (<code>storeMetadataMap</code>) and a map of store keys to row metadata (<code>storeKeyMap</code>).
-        Also sets up a mechanism (<code>pendingWrites</code>) for batching GPU write operations.
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>// Suppose you obtained 'device' from navigator.gpu.requestAdapter()
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li>
+                    <code>device</code> (<code>GPUDevice</code>):
+                    The WebGPU device instance used to allocate GPU buffers.
+                </li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            Initializes internal data structures for CPU-based metadata
+            (<code>storeMetadataMap</code>) and a map of store keys to row metadata (<code>storeKeyMap</code>).
+            Also sets up a mechanism (<code>pendingWrites</code>) for batching GPU write operations.
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>// Suppose you obtained 'device' from navigator.gpu.requestAdapter()
 const videoDB = new VideoDB(device);
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <br />
@@ -1488,383 +1539,567 @@ const videoDB = new VideoDB(device);
 <h2>Methods</h2><br />
 
 <!-- createObjectStore -->
-<h3><code style="font-size:larger;">createObjectStore(storeName, options)</code></h3><br />
+<h3><code style="font-size:xx-large;">createObjectStore(storeName, options)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name for the new store.</li>
-            <li>
-                <code>options</code> (<code>object</code>):
-                <ul>
-                    <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): The data format.</li>
-                    <li>
-                        <code>typedArrayType</code> (optional):
-                        The typed array constructor name (e.g. <code>"Float32Array"</code>, <code>"Float64Array"</code>,
-                        <code>"Uint32Array"</code>, <code>"Uint8Array"</code>).
-                    </li>
-                    <li><code>bufferSize</code> (<code>number</code>): The chunk size for GPU buffers (e.g., 250 MB).</li>
-                    <li><code>rowSize</code> (<code>number</code>, optional): The row’s fixed size (if relevant).</li>
-                    <li><code>totalRows</code> (<code>number</code>): A hint for total row capacity.</li>
-                </ul>
-            </li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Throws an error if the store already exists.</li>
-            <li>If <code>dataType</code> is <code>"TypedArray"</code> but <code>typedArrayType</code> is missing, an error is thrown.</li>
-            <li>Calculates <code>rowsPerBuffer</code> if <code>dataType</code> is not <code>"JSON"</code> and <code>rowSize</code> is provided.</li>
-            <li>Initializes store metadata (e.g., <code>buffers</code>, <code>rows</code>, <code>rowSize</code>, <code>bufferSize</code>).</li>
-            <li>Stores the metadata in <code>storeMetadataMap</code> and creates a key map in <code>storeKeyMap</code>.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>videoDB.createObjectStore("myFloatStore", {
-    dataType: "TypedArray",
-    typedArrayType: "Float32Array",
-    bufferSize: 250 * 1024 * 1024,
-    totalRows: 1000
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name for the new store.</li>
+                <li>
+                    <code>options</code> (<code>object</code>):
+                    <ul>
+                        <li><code>dataType</code> (<code>"TypedArray"|"ArrayBuffer"|"JSON"</code>): The data format.</li>
+                        <li>
+                            <code>typedArrayType</code> (optional):
+                            The typed array constructor name (e.g. <code>"Float32Array"</code>, <code>"Float64Array"</code>,
+                            <code>"Uint32Array"</code>, <code>"Uint8Array"</code>).
+                        </li>
+                        <li><code>bufferSize</code> (<code>number</code>): The chunk size for GPU buffers (e.g., 250 MB).</li>
+                        <li><code>rowSize</code> (<code>number</code>, optional): The row’s fixed size (if relevant).</li>
+                        <li><code>totalRows</code> (<code>number</code>): A hint for total row capacity.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>Throws an error if the store already exists.</li>
+                <li>If <code>dataType</code> is <code>"TypedArray"</code> but <code>typedArrayType</code> is missing, an error is thrown.</li>
+                <li>Calculates <code>rowsPerBuffer</code> if <code>dataType</code> is not <code>"JSON"</code> and <code>rowSize</code> is provided.</li>
+                <li>Initializes store metadata (e.g., <code>buffers</code>, <code>rows</code>, <code>rowSize</code>, <code>bufferSize</code>).</li>
+                <li>Stores the metadata in <code>storeMetadataMap</code> and creates a key map in <code>storeKeyMap</code>.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>videoDB.createObjectStore("myFloatStore", {
+        dataType: "TypedArray",
+        typedArrayType: "Float32Array",
+        bufferSize: 250 * 1024 * 1024,
+        totalRows: 1000
 });
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- deleteObjectStore -->
-<h3><code style="font-size:larger;">deleteObjectStore(storeName)</code></h3><br />
+<h3><code style="font-size:xx-large;">deleteObjectStore(storeName)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
-        </ul>
-    </li>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-    <code>void</code></li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>If the store doesn’t exist, logs a warning and returns.</li>
-            <li>Removes the store’s metadata from <code>storeMetadataMap</code>.</li>
-            <li>Removes the store’s key map from <code>storeKeyMap</code>.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>videoDB.deleteObjectStore("myFloatStore");
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the store to delete.</li>
+            </ul>
+        </li>
+        <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>void</code></li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>If the store doesn’t exist, logs a warning and returns.</li>
+                <li>Removes the store’s metadata from <code>storeMetadataMap</code>.</li>
+                <li>Removes the store’s key map from <code>storeKeyMap</code>.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>videoDB.deleteObjectStore("myFloatStore");
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- listObjectStores -->
-<h3><code style="font-size:larger;">listObjectStores()</code></h3><br />
+<h3><code style="font-size:xx-large;">listObjectStores()</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-    None</li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-        <code>string[]</code>: The list of all object store names.
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        Returns the keys of <code>storeMetadataMap</code> as an array, indicating all known stores.
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>const stores = videoDB.listObjectStores();
+        <li><br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        None</li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+            <code>string[]</code>: The list of all object store names.
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            Returns the keys of <code>storeMetadataMap</code> as an array, indicating all known stores.
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>const stores = videoDB.listObjectStores();
 console.log(stores); // e.g. ["myFloatStore", "jsonStore"]
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- add -->
-<h3><code style="font-size:larger;">add(storeName, key, value)</code></h3><br />
+<h3><code style="font-size:xx-large;">add(storeName, key, value)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-            <li><code>key</code> (<code>string</code>): A unique key identifying the row.</li>
-            <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
-        </ul>
-    </li>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-    <code>Promise&lt;void&gt;</code></li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Throws an error if the store does not exist.</li>
-            <li>Throws an error if the key already exists (in “add” mode).</li>
-            <li>Serializes the <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code> without immediate flush.</li>
-            <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>// Adding a new JSON record
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+                <li><code>key</code> (<code>string</code>): A unique key identifying the row.</li>
+                <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
+            </ul>
+        </li>
+        <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;void&gt;</code></li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>Throws an error if the store does not exist.</li>
+                <li>Throws an error if the key already exists (in “add” mode).</li>
+                <li>Serializes the <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code> without immediate flush.</li>
+                <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>// Adding a new JSON record
 await videoDB.add("jsonStore", "record1", { foo: "bar", time: Date.now() });
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- put -->
-<h3><code style="font-size:larger;">put(storeName, key, value)</code></h3><br />
+<h3><code style="font-size:xx-large;">put(storeName, key, value)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The target store name.</li>
-            <li><code>key</code> (<code>string</code>): A unique string identifying the row.</li>
-            <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
-        </ul>
-    </li>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-    <code>Promise&lt;void&gt;</code></li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>If the row doesn’t exist, it’s created; if it does, it’s overwritten (upsert behavior).</li>
-            <li>Serializes <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code>.</li>
-            <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>// Inserting a Float32Array into "embeddingStore"
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+                <li><code>key</code> (<code>string</code>): A unique string identifying the row.</li>
+                <li><code>value</code> (<code>any</code>): The data (JSON, TypedArray, or ArrayBuffer).</li>
+            </ul>
+        </li>
+        <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;void&gt;</code></li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>If the row doesn’t exist, it’s created; if it does, it’s overwritten (upsert behavior).</li>
+                <li>Serializes <code>value</code> into an <code>ArrayBuffer</code> and queues a GPU write in <code>pendingWrites</code>.</li>
+                <li>Flushes to GPU automatically after 1 second of inactivity or if a batch size threshold is reached.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>// Inserting a Float32Array into "embeddingStore"
 const vector = new Float32Array([1, 2, 3, 4]);
 await videoDB.put("embeddingStore", "vector:001", vector);
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- get -->
-<h3><code style="font-size:larger;">get(storeName, key)</code></h3><br />
+<h3><code style="font-size:xx-large;">get(storeName, key)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-            <li><code>key</code> (<code>string</code>): The key identifying which row to read. Supports SQL wildcard patterns.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-        <code>Promise&lt;any|null&gt;</code>: Deserialized data or <code>null</code> if not found.
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">SQL Wildcards</strong>
-        <p>This method supports SQL Server–style <code>LIKE</code> patterns in the <code>key</code> parameter. If the key contains
-        wildcard characters, it retrieves the first matching key in the store. Otherwise, the key is read as-is.</p>
-        <ul>
-            <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
-            <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
-            <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
-            <li><code>[^abc]</code> matches any single character <em>not</em> in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
-        </ul>
-        <p>Note that these patterns are anchored, so they must match the entire key string from start to finish.</p>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Ensures all pending writes are flushed before reading (no stale data).</li>
-            <li>Uses the <code>getMultiple</code> method internally, allowing the use of wildcard patterns.</li>
-            <li>If the <code>key</code> contains wildcards, retrieves the first matching entry; otherwise, retrieves the specified key.</li>
-            <li>Returns <code>null</code> if no matching key is found.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>// Retrieving a specific key
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+                <li><code>key</code> (<code>string</code>): The key identifying which row to read. Supports SQL wildcard patterns.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+            <code>Promise&lt;any|null&gt;</code>: Deserialized data or <code>null</code> if not found.
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">SQL Wildcards</strong>
+            <p>This method supports SQL Server–style <code>LIKE</code> patterns in the <code>key</code> parameter. If the key contains
+            wildcard characters, it retrieves the first matching key in the store. Otherwise, the key is read as-is.</p>
+            <ul>
+                <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
+                <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
+                <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+                <li><code>[^abc]</code> matches any single character <em>not</em> in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+            </ul>
+            <p>Note that these patterns are anchored, so they must match the entire key string from start to finish.</p>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>Ensures all pending writes are flushed before reading (no stale data).</li>
+                <li>Uses the <code>getMultiple</code> method internally, allowing the use of wildcard patterns.</li>
+                <li>If the <code>key</code> contains wildcards, retrieves the first matching entry; otherwise, retrieves the specified key.</li>
+                <li>Returns <code>null</code> if no matching key is found.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>// Retrieving a specific key
 const vector = await videoDB.get("embeddingStore", "vector:001");
 console.log("Retrieved vector length:", vector.length);
 
 // Using a wildcard pattern to retrieve the first matching key
 const firstMatchingVector = await videoDB.get("embeddingStore", "vector:%");
 console.log("First matching vector:", firstMatchingVector);
-        </code></pre>
-    </li>
+            </code></pre>
+        </li>
 </ul><br />
 
 <!-- getMultiple -->
-<h3><code style="font-size:larger;">getMultiple(storeName, keys)</code></h3><br />
+<h3><code style="font-size:xx-large;">getMultiple(storeName, keys)</code><br />
+<code style="font-size:xx-large;">getMultiple(storeName, skip, take)</code></h3><br />
 <hr style="margin-top:-10px;">
 
-<ul>
+<p>This method supports two distinct overloads:</p>
+
+<ul style="list-style-type:disc; margin-left: 20px;">
     <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+        <strong>Overload #1:</strong> <code>getMultiple(storeName: string, keys: string[]): Promise&lt;(any | null)[]&gt;</code>
         <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-            <li><code>keys</code> (<code>string[]</code>): The array of keys or wildcard patterns to read.</li>
+            <li><strong>Parameters:</strong></li>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+                <li><code>keys</code> (<code>string[]</code>): An array of keys or wildcard patterns to fetch.</li>
+            </ul>
+            <li><strong>Returns:</strong> <code>Promise&lt;(any | null)[]&gt;</code></li>
         </ul>
     </li>
+    <br />
     <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-        <code>Promise&lt;(any | null)[]&gt;</code>:
-        An array of deserialized data objects, in the same order as the <em>expanded</em> set of keys. If a key (or wildcard expansion) is not found or inactive, the array item is <code>null</code>.
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">SQL Wildcards</strong>
-        <p>This method supports SQL Server–style <code>LIKE</code> patterns in the <code>keys</code> parameter. Each pattern is expanded to all matching keys in the store. The list of expanded keys is used for a single bulk read operation.</p>
+        <strong>Overload #2:</strong> <code>getMultiple(storeName: string, skip: number, take: number): Promise&lt;(any | null)[]&gt;</code>
         <ul>
-            <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
-            <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
-            <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
-            <li><code>[^abc]</code> matches any single character <em>not</em> in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
-        </ul>
-        <p>These patterns must match the entire key from start to finish. If no actual keys match a wildcard, the corresponding element in the results array is <code>null</code>.</p>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Flushes any pending writes to avoid stale data.</li>
-            <li>Expands all wildcard patterns into concrete keys before a single GPU <code>mapAsync</code> operation.</li>
-            <li>Deserializes each row based on <code>storeMeta.dataType</code> and returns them in an array, preserving the expanded key order.</li>
-            <li>Any row not found or not active is <code>null</code>.</li>
+            <li><strong>Parameters:</strong></li>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The target store name.</li>
+                <li><code>skip</code> (<code>number</code>): The zero-based offset at which to start reading rows.</li>
+                <li><code>take</code> (<code>number</code>): The number of rows to read from that offset.</li>
+            </ul>
+            <li><strong>Returns:</strong> <code>Promise&lt;(any | null)[]&gt;</code></li>
         </ul>
     </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>// Retrieving multiple specific keys
+</ul>
+
+<br />
+
+<p><strong>SQL Wildcards (Overload #1 with <code>keys</code>):</strong></p>
+<p>This overload supports SQL Server–style <code>LIKE</code> patterns in the <code>keys</code> array. Each pattern is expanded to all matching keys in the store before performing a single bulk read. Examples:</p>
+<ul style="margin-left: 20px;">
+    <li><code>%</code> matches zero or more characters (<code>.*</code> in regex).</li>
+    <li><code>_</code> matches exactly one character (<code>.</code> in regex).</li>
+    <li><code>[abc]</code> matches any single character in the set <code>a</code>, <code>b</code>, <code>c</code>.</li>
+    <li><code>[^abc]</code> matches any single character <em>not</em> in that set.</li>
+</ul>
+<p>These patterns must match the entire key. If no actual keys match a wildcard, the corresponding result item is <code>null</code>.</p>
+
+<br />
+
+<p><strong>Examples:</strong></p>
+<pre><code>// Overload #1: Retrieving multiple specific keys
 const items = await videoDB.getMultiple("embeddingStore", ["vector:001", "vector:002"]);
 console.log("Results:", items);
 
-// Using wildcard patterns
+// Overload #1: Using wildcard patterns
 const wildcardItems = await videoDB.getMultiple("embeddingStore", ["vector:%", "config:%"]);
 console.log("Wildcard results:", wildcardItems);
-        </code></pre>
-    </li>
-</ul><br />
+
+// Overload #2: Fetch by pagination
+const pagedItems = await videoDB.getMultiple("embeddingStore", 10, 5);
+console.log("Paged results:", pagedItems);
+</code></pre>
 
 <!-- delete -->
-<h3><code style="font-size:larger;">delete(storeName, key)</code></h3><br />
+<h2 style="margin-top:15px;"><code style="font-size:xx-large;">delete(storeName, key)</code></h2><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
-            <li><code>key</code> (<code>string</code>): The key identifying which row to delete.</li>
-        </ul>
-    </li>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-    <code>Promise&lt;void&gt;</code></li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>If the row is not found or already inactive, logs a message and returns.</li>
-            <li>Optionally writes zeros to the GPU buffer for that row (for a “true” data wipe).</li>
-            <li>Queues a delete operation in <code>pendingWrites</code>; actual metadata removal happens on flush.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>await videoDB.delete("myFloatStore", "row123");
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store.</li>
+                <li><code>key</code> (<code>string</code>): The key identifying which row to delete.</li>
+            </ul>
+        </li>
+        <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>Promise&lt;void&gt;</code></li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>If the row is not found or already inactive, logs a message and returns.</li>
+                <li>Optionally writes zeros to the GPU buffer for that row (for a “true” data wipe).</li>
+                <li>Queues a delete operation in <code>pendingWrites</code>; actual metadata removal happens on flush.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>await videoDB.delete("myFloatStore", "row123");
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- clear -->
-<h3><code style="font-size:larger;">clear(storeName)</code></h3><br />
+<h3><code style="font-size:xx-large;">clear(storeName)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store to clear.</li>
-        </ul>
-    </li>
-    <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-    <code>void</code></li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Removes all rows from the store’s metadata array.</li>
-            <li>Destroys all GPU buffers associated with the store.</li>
-            <li>Recreates a single fresh GPU buffer for subsequent usage.</li>
-            <li>Clears the store’s key map and updates metadata.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>videoDB.clear("myFloatStore");
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store to clear.</li>
+            </ul>
+        </li>
+        <li><br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+        <code>void</code></li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>Removes all rows from the store’s metadata array.</li>
+                <li>Destroys all GPU buffers associated with the store.</li>
+                <li>Recreates a single fresh GPU buffer for subsequent usage.</li>
+                <li>Clears the store’s key map and updates metadata.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>videoDB.clear("myFloatStore");
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 
 <!-- openCursor -->
-<h3><code style="font-size:larger;">openCursor(storeName, options?)</code></h3><br />
+<h3><code style="font-size:xx-large;">openCursor(storeName, options?)</code></h3><br />
 <hr style="margin-top:-10px;">
 
 <ul>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
-        <ul>
-            <li><code>storeName</code> (<code>string</code>): The name of the object store to iterate over.</li>
-            <li>
-                <code>options</code> (optional, <code>object</code>):
-                <ul>
-                    <li>
-                        <code>range</code> (<code>object</code>):
-                        <ul>
-                            <li><code>lowerBound</code> (<code>string</code>): The lower bound of keys to include.</li>
-                            <li><code>upperBound</code> (<code>string</code>): The upper bound of keys to include.</li>
-                            <li><code>lowerInclusive</code> (<code>boolean</code>): Whether the lower bound is inclusive.</li>
-                            <li><code>upperInclusive</code> (<code>boolean</code>): Whether the upper bound is inclusive.</li>
-                        </ul>
-                    </li>
-                    <li><code>direction</code> (<code>"next"</code> | <code>"prev"</code>): The direction of iteration.</li>
-                </ul>
-            </li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
-        <code>AsyncGenerator&lt;{ key: string; value: any }, void, unknown&gt;</code>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
-        <ul>
-            <li>Retrieves store metadata and the key map.</li>
-            <li>Collects all active keys from the key map.</li>
-            <li>Optionally filters them by the specified <code>range</code>.</li>
-            <li>Sorts keys in ascending (<code>"next"</code>) or descending (<code>"prev"</code>) order.</li>
-            <li>For each key, retrieves data via <code>get()</code> and yields <code>{ key, value }</code>.</li>
-        </ul>
-    </li>
-    <li>
-        <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
-        <pre><code>for await (const record of videoDB.openCursor("myFloatStore")) {
-    console.log(record.key, record.value);
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Parameters</strong>
+            <ul>
+                <li><code>storeName</code> (<code>string</code>): The name of the object store to iterate over.</li>
+                <li>
+                    <code>options</code> (optional, <code>object</code>):
+                    <ul>
+                        <li>
+                            <code>range</code> (<code>object</code>):
+                            <ul>
+                                <li><code>lowerBound</code> (<code>string</code>): The lower bound of keys to include.</li>
+                                <li><code>upperBound</code> (<code>string</code>): The upper bound of keys to include.</li>
+                                <li><code>lowerInclusive</code> (<code>boolean</code>): Whether the lower bound is inclusive.</li>
+                                <li><code>upperInclusive</code> (<code>boolean</code>): Whether the upper bound is inclusive.</li>
+                            </ul>
+                        </li>
+                        <li><code>direction</code> (<code>"next"</code> | <code>"prev"</code>): The direction of iteration.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Returns</strong>
+            <code>AsyncGenerator&lt;{ key: string; value: any }, void, unknown&gt;</code>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Behavior</strong>
+            <ul>
+                <li>Retrieves store metadata and the key map.</li>
+                <li>Collects all active keys from the key map.</li>
+                <li>Optionally filters them by the specified <code>range</code>.</li>
+                <li>Sorts keys in ascending (<code>"next"</code>) or descending (<code>"prev"</code>) order.</li>
+                <li>For each key, retrieves data via <code>get()</code> and yields <code>{ key, value }</code>.</li>
+            </ul>
+        </li>
+        <li>
+            <br /><strong style="padding-bottom:5px; display:block;">Example</strong>
+            <pre><code>for await (const record of videoDB.openCursor("myFloatStore")) {
+        console.log(record.key, record.value);
 }
 
 const range = { lowerBound: "100", upperBound: "200", lowerInclusive: true, upperInclusive: false };
 for await (const record of videoDB.openCursor("myFloatStore", { range, direction: "prev" })) {
-    console.log(record.key, record.value);
+        console.log(record.key, record.value);
 }
 </code></pre>
-    </li>
+        </li>
 </ul><br />
 </div>
 `;
 
             // Insert into the right pane
             document.getElementById('codePane').innerHTML = docHtml;
+        }
+
+        /**
+         * NEW helper function to fetch/store a specific public dataset,
+         * previously done inside consumePublicData().
+         * - Logs success/error to the console
+         * - Demonstrates reusability for any sub-link (child item).
+         *
+         * @param {string} datasetTask - One of: 'powerballNumbers',
+         *   'mentalHealthCare', 'anxietyDepressionIndicators',
+         *   'globalLandslideCatalog'.
+         */
+        async function handlePublicJson(datasetTask) {
+            // Provide a small mapping from sub-link task → data config
+            const datasetConfig = {
+                powerballNumbers: {
+                    url: 'https://data.ny.gov/api/views/d6yy-54nr/rows.json?accessType=DOWNLOAD',
+                    label: 'Lottery Powerball Winning Numbers: Beginning 2010',
+                    storeName: 'store-lottery'
+                },
+                mentalHealthCare: {
+                    url: 'https://data.cdc.gov/api/views/yni7-er2q/rows.json?accessType=DOWNLOAD',
+                    label: 'Mental Health Care in the Last 4 Weeks',
+                    storeName: 'store-mental-health'
+                },
+                anxietyDepressionIndicators: {
+                    url: 'https://data.cdc.gov/api/views/8pt5-q6wp/rows.json?accessType=DOWNLOAD',
+                    label: 'Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms',
+                    storeName: 'store-anxiety-depression'
+                },
+                globalLandslideCatalog: {
+                    url: 'https://data.nasa.gov/api/views/dd9e-wu2v/rows.json?accessType=DOWNLOAD',
+                    label: 'Global Landslide Catalog Export',
+                    storeName: 'store-landslide'
+                }
+            };
+
+            // Make sure we have a matching config
+            if (!datasetConfig[datasetTask]) {
+                logToConsole(`[ERROR] Unknown public JSON dataset: ${datasetTask}`);
+                return;
+            }
+
+            const { url, label, storeName } = datasetConfig[datasetTask];
+
+            // Ensure GPU + VideoDB
+            if (!device || !videoDB) {
+                await setupDevice();
+            }
+
+            try {
+                logToConsole(`[TASK] Fetching dataset for "${label}"...`);
+
+                // Fetch & parse data
+                const jsonRows = await fetchColumnsAndData(url);
+
+                // Calculate total size
+                let totalBytes = 0;
+                for (const row of jsonRows) {
+                    const rowStr = JSON.stringify(row);
+                    totalBytes += new TextEncoder().encode(rowStr).length;
+                }
+                const formattedSize = formatSize(totalBytes);
+
+                // Create or re-create our store for these rows
+                if (videoDB.listObjectStores().includes(storeName)) {
+                    videoDB.deleteObjectStore(storeName);
+                }
+                videoDB.createObjectStore(storeName, {
+                    dataType: "JSON",
+                    bufferSize: 10 * 1024 * 1024,
+                    totalRows: jsonRows.length
+                });
+
+                // Add each row
+                for (let i = 0; i < jsonRows.length; i++) {
+                    await videoDB.add(storeName, `row_${i}`, jsonRows[i]);
+                }
+
+                logToConsole(`[SUCCESS] Loaded ${jsonRows.length} rows (Total Size: ${formattedSize}) into "${storeName}".`);
+                logToConsole(`[INFO] Dataset label: "${label}"`);
+
+                // Optionally, show a [VIEW] snippet or call viewDataset(storeName) if you like
+                // For example:
+                logCommandToConsole(`
+<code>
+<b style="color:green;">// To view data programmatically:</b><br/>
+viewDataset("${storeName}");
+</code>`);
+                logToConsole(``);
+
+            } catch (error) {
+                logToConsole(`[ERROR] ${error.message}`);
+            }
+        }
+
+        /**
+         * (NEW) Reusable size formatter
+         * @param {number} bytes
+         * @returns {string} e.g. "47.52 KB" or "1.23 MB"
+         */
+        function formatSize(bytes) {
+            if (bytes >= 1024 * 1024 * 1024) {
+                return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+            } else if (bytes >= 1024 * 1024) {
+                return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+            } else if (bytes >= 1024) {
+                return (bytes / 1024).toFixed(2) + " KB";
+            } else {
+                return bytes + " B";
+            }
+        }
+
+        /**
+         * Edited version: fetchColumnsAndData with no console logs.
+         * Returns an array of "fully formed" JSON rows.
+         */
+        async function fetchColumnsAndData(url) {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Network response was not ok. Status: ${response.status} ${response.statusText}`);
+            }
+            const jsonData = await response.json();
+
+            if (!jsonData.meta || !jsonData.meta.view || !jsonData.meta.view.columns || !jsonData.data) {
+                throw new Error("JSON structure is not as expected. Missing 'meta.view.columns' or 'data'.");
+            }
+
+            // Extract columns + data
+            const columns = jsonData.meta.view.columns;
+            const data = jsonData.data;
+
+            // Build the columnsOutput array
+            const columnsOutput = columns.map((col, idx) => {
+                return {
+                    originalIndex: idx,
+                    name: col.name || col.fieldName || `Column${idx}`,
+                    fieldName: col.name || col.fieldName || null,
+                    dataTypeName: col.dataTypeName || null,
+                    flags: col.flags || [],
+                    position: col.position || null,
+                    description: col.description || null,
+                    renderTypeName: col.renderTypeName || null
+                };
+            });
+
+            // Convert data arrays to row objects
+            return createJsonRows(columnsOutput, data);
+        }
+
+        /**
+         * Creates an array of objects, each representing one row, with sanitized column names.
+         */
+        function createJsonRows(columnsOutput, dataOutput) {
+            function sanitizeColumnName(name, index) {
+                let sanitized = name.replace(/^[^a-zA-Z0-9]+/, '');
+                if (!sanitized) {
+                    sanitized = `col${index}`;
+                }
+                return sanitized;
+            }
+
+            return dataOutput.map((rowArray) => {
+                const rowObject = {};
+                columnsOutput.forEach((colMeta, idx) => {
+                    const rawName = colMeta.name || colMeta.fieldName || `Column${colMeta.originalIndex}`;
+                    const propertyName = sanitizeColumnName(rawName, idx);
+                    const cellValue = rowArray[colMeta.originalIndex];
+                    rowObject[propertyName] = cellValue;
+                });
+                return rowObject;
+            });
         }
 
         // Initialize the demo page once the DOM is ready
