@@ -324,9 +324,7 @@
                     const task = link.getAttribute('data-task');
 
                     // Clear both console and code pane before each new task
-                    if (task !== 'powerballNumbers' && task !== 'mentalHealthCare' && task !== 'anxietyDepressionIndicators' && task !== 'globalLandslideCatalog') {
-                        clearConsole();
-                    }
+                    clearConsole();
                     clearCodePane();
 
                     switch (task) {
