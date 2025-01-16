@@ -2061,7 +2061,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     await videoDB.add(storeName, `row_${i}`, jsonRows[i]);
                 }
 
-                logToConsole(`[SUCCESS] Loaded ${jsonRows.length} rows (Total Size: ${formattedSize}) into "${storeName}".`);
+                logToConsole(`[SUCCESS] Loaded ${jsonRows.length.toLocaleString()} rows (Total Size: ${formattedSize}) into "${storeName}".`);
                 logToConsole(`[INFO] Dataset label: "${label}"`);
 
                 // Optionally, show a [VIEW] snippet or call viewDataset(storeName) if you like
