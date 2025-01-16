@@ -2,9 +2,23 @@
 <html lang="en">
 <head>
     <link rel="icon" href="favicon.ico" type="image/x-icon">
+    
+    <!-- CSS for jsGrid -->
+    <link href="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid-theme.min.css" rel="stylesheet">
+    
+    <!-- JS for jsGrid -->
+    <script src="https://cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid.min.js"></script>
+
     <meta charset="UTF-8" />
     <title>VideoDB Demo</title>
     <style>
+        #jsGrid {
+            margin: 20px;
+            width: 90%;
+        }
+
         /* Basic reset and font */
         * {
             box-sizing: border-box;
@@ -160,7 +174,6 @@
 
     <div class="container">
         <!-- Left Panel: List of tasks/links -->
-        <!-- Left Panel: List of tasks/links -->
         <div class="panel-left">
             <h2>VideoDB Tasks</h2>
             <ul class="task-list">
@@ -229,7 +242,7 @@
                             <li>
                                 <a class="submenu-button" data-task="lapdArrests">Arrest Data from 2020 to Present LAPD</a>
                             </li>
-                       </ul>
+                        </ul>
                     </div>
                 </li>
             </ul>
@@ -250,7 +263,11 @@
                 <!-- Code or commands for the chosen task will appear here. -->
                 <p>No code to show. Select a task from the left panel.</p>
             </div>
+
+            <!-- Placeholder for jsGrid table -->
+            <div id="jsGridContainer" style="margin-top: 20px;"></div>
         </div>
+
         <hr />
     </div>
 
@@ -329,14 +346,23 @@
             const taskLinks = document.querySelectorAll('.task-list a[data-task]');
             taskLinks.forEach(link => {
                 link.addEventListener('click', async (event) => {
-                    // Disable the link
-                    link.classList.add('disabled');
-                    link.style.pointerEvents = 'none';
-                    link.style.opacity = '0.5';
-                    link.textContent += ' (Loaded)';
 
                     event.preventDefault();
                     const task = link.getAttribute('data-task');
+
+                    if (['powerballNumbers',
+                        'mentalHealthCare',
+                        'anxietyDepressionIndicators',
+                        'globalLandslideCatalog',
+                        'causesOfDeath',
+                        'babyNames',
+                        'youthTobacco',
+                        'lapdArrests'].some(substring => task.includes(substring))) {
+                        link.classList.add('disabled');
+                        link.style.pointerEvents = 'none';
+                        link.style.opacity = '0.5';
+                        link.textContent += ' (Loaded)';
+                    }
 
                     // Clear both console and code pane before each new task
                     clearCodePane();
@@ -360,12 +386,10 @@
                         case 'accuracyTest':
                             await accuracyTest();
                             break;
-
                         // The parent "consumePublicData" does nothing now
                         case 'consumePublicData':
                              // intentionally left empty
                             break;
-
                         // Child links trigger dataset fetch/store
                         case 'powerballNumbers':
                             await handlePublicJson('powerballNumbers');
@@ -2057,22 +2081,28 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                 });
 
                 // Add each row
+                let aKeys = [];
                 for (let i = 0; i < jsonRows.length; i++) {
-                    await videoDB.add(storeName, `row_${i}`, jsonRows[i]);
+                    aKeys.push(jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`);
+                    await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
                 }
+
+                // Wait until VideoDB is marked ready
+                await new Promise(resolve => {
+                    const checkInterval = setInterval(() => {
+                        if (videoDB.isReady) {
+                            clearInterval(checkInterval);
+                            resolve();
+                        }
+                    }, 300);
+                });
+
+                // Now call setupJsGrid()
+                // await setupJsGrid(storeName);
 
                 logToConsole(`[SUCCESS] Loaded ${jsonRows.length.toLocaleString()} rows (Total Size: ${formattedSize}) into "${storeName}".`);
                 logToConsole(`[INFO] Dataset label: "${label}"`);
-
-                // Optionally, show a [VIEW] snippet or call viewDataset(storeName) if you like
-                // For example:
-                logCommandToConsole(`
-<code>
-<b style="color:green;">// To view data programmatically:</b><br/>
-viewDataset("${storeName}");
-</code>`);
                 logToConsole(``);
-
             } catch (error) {
                 logToConsole(`[ERROR] ${error.message}`);
             }
@@ -2154,6 +2184,41 @@ viewDataset("${storeName}");
                 });
                 return rowObject;
             });
+        }
+
+        async function setupJsGrid(storeName) {
+            // 1) Fetch the first 10 rows
+            const data = await videoDB.getMultiple(storeName, 0, 10);
+
+            // 2) Find the first non-null row to define columns
+            const sampleRow = data.find(item => item !== null);
+            if (!sampleRow) {
+                logToConsole(`[INFO] No data found in store "${storeName}" to build jsGrid columns.`);
+                return;
+            }
+
+            // 3) Build columns from object keys
+            const fields = Object.keys(sampleRow).map(key => ({
+                name: key,
+                type: "text"
+            }));
+
+            // 4) Initialize jsGrid with the loaded data
+            $("#jsGridContainer").jsGrid({
+                width: "100%",
+                height: "400px",
+
+                inserting: false,
+                editing: false,
+                sorting: true,
+                paging: false, // we can handle real paging later
+
+                data: data.filter(item => item !== null), // remove any null placeholders
+                fields: fields
+            });
+
+            // Optionally log or highlight in the code pane
+            logCommandToConsole(`jsGrid has been initialized for "${storeName}" with 10 rows.`);
         }
 
         // Initialize the demo page once the DOM is ready

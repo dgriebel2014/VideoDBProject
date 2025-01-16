@@ -79,6 +79,7 @@ export class VideoDB {
     public pendingWrites: PendingWrite[] = [];
     private readonly BATCH_SIZE = 10000; // e.g. auto-flush after 10000 writes
     private flushTimer: number | null = null;
+    public isReady: boolean | null = true;
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -178,6 +179,8 @@ export class VideoDB {
      * @throws {Error} If the store does not exist or a record with the same key is already active (in "add" mode).
      */
     public async add(storeName: string, key: string, value: any): Promise<void> {
+        this.isReady = false;
+
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
@@ -225,6 +228,8 @@ export class VideoDB {
      * @throws {Error} If the store does not exist.
      */
     public async put(storeName: string, key: string, value: any): Promise<void> {
+        this.isReady = false;
+
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
@@ -300,8 +305,12 @@ export class VideoDB {
             const take = param3;
 
             // Flush & retrieve store metadata
-            const { storeMeta } = await this.flushAndGetMetadata(storeName);
-            const { results } = await this.readRowsWithPagination(storeName, storeMeta, skip, take);
+            const { keyMap } = await this.flushAndGetMetadata(storeName);
+
+            // Convert the store’s keyMap into an array of all keys
+            const allKeys = Array.from(keyMap.keys());
+
+            const { results } = await this.readRowsWithPagination(storeName, allKeys, skip, take);
             return results;
         } else {
             throw new Error('Invalid parameters for getMultiple. Expected either (storeName, keys[]) or (storeName, skip, take).');
@@ -319,13 +328,10 @@ export class VideoDB {
      */
     private async readRowsWithPagination(
         storeName: string,
-        storeMeta: any,
+        allKeys: any,
         skip: number,
         take: number
     ): Promise<{ results: (any | null)[]; perKeyMetrics: any }> {
-        // Extract all keys from storeMeta (assuming storeMeta contains all keys)
-        const allKeys = Object.keys(storeMeta);
-
         // Slice the keys array to get the paginated keys
         const paginatedKeys = allKeys.slice(skip, skip + take);
 
@@ -1148,6 +1154,7 @@ export class VideoDB {
                 console.error('Error during timed flushWrites:', error);
             });
             this.flushTimer = null; // Reset the timer handle
+            this.isReady = true;
         }, 250);
     }
 
