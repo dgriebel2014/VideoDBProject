@@ -51,6 +51,7 @@ export class VideoDB {
     pendingWrites = [];
     BATCH_SIZE = 10000; // e.g. auto-flush after 10000 writes
     flushTimer = null;
+    isReady = true;
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -133,6 +134,7 @@ export class VideoDB {
      * @throws {Error} If the store does not exist or a record with the same key is already active (in "add" mode).
      */
     async add(storeName, key, value) {
+        this.isReady = false;
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
@@ -167,6 +169,7 @@ export class VideoDB {
      * @throws {Error} If the store does not exist.
      */
     async put(storeName, key, value) {
+        this.isReady = false;
         const storeMeta = this.storeMetadataMap.get(storeName);
         if (!storeMeta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
@@ -217,8 +220,10 @@ export class VideoDB {
             const skip = param2;
             const take = param3;
             // Flush & retrieve store metadata
-            const { storeMeta } = await this.flushAndGetMetadata(storeName);
-            const { results } = await this.readRowsWithPagination(storeName, storeMeta, skip, take);
+            const { keyMap } = await this.flushAndGetMetadata(storeName);
+            // Convert the store’s keyMap into an array of all keys
+            const allKeys = Array.from(keyMap.keys());
+            const { results } = await this.readRowsWithPagination(storeName, allKeys, skip, take);
             return results;
         }
         else {
@@ -234,9 +239,7 @@ export class VideoDB {
      * @param take - Number of records to take.
      * @returns An object containing the results and per-key metrics.
      */
-    async readRowsWithPagination(storeName, storeMeta, skip, take) {
-        // Extract all keys from storeMeta (assuming storeMeta contains all keys)
-        const allKeys = Object.keys(storeMeta);
+    async readRowsWithPagination(storeName, allKeys, skip, take) {
         // Slice the keys array to get the paginated keys
         const paginatedKeys = allKeys.slice(skip, skip + take);
         // Use getMultipleByKeys to fetch the data
@@ -896,6 +899,7 @@ export class VideoDB {
                 console.error('Error during timed flushWrites:', error);
             });
             this.flushTimer = null; // Reset the timer handle
+            this.isReady = true;
         }, 250);
     }
     /**
