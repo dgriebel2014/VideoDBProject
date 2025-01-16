@@ -205,24 +205,61 @@ export class VideoDB {
         const result = results[0];
         return result;
     }
+    async getMultiple(storeName, param2, param3) {
+        if (Array.isArray(param2)) {
+            // Overload 1: Fetch by keys
+            const keys = param2;
+            const { results } = await this.getMultipleByKeys(storeName, keys);
+            return results;
+        }
+        else if (typeof param2 === 'number' && typeof param3 === 'number') {
+            // Overload 2: Fetch by pagination (skip and take)
+            const skip = param2;
+            const take = param3;
+            // Flush & retrieve store metadata
+            const { storeMeta } = await this.flushAndGetMetadata(storeName);
+            const { results } = await this.readRowsWithPagination(storeName, storeMeta, skip, take);
+            return results;
+        }
+        else {
+            throw new Error('Invalid parameters for getMultiple. Expected either (storeName, keys[]) or (storeName, skip, take).');
+        }
+    }
     /**
-     * Reads an array of keys or wildcard patterns from the specified store
-     * using a staging buffer for each row.  Supports SQL Server–style wildcards in key names.
+     * Reads rows from the store based on skip and take parameters.
      *
-     * @param {string} storeName - The target store name.
-     * @param {string[]} keys - The array of keys (or wildcard patterns) to read.
-     * @returns {Promise<(any|null)[]>} An array of deserialized data, matching the input order.
+     * @param storeName - The target store name.
+     * @param storeMeta - Metadata of the store.
+     * @param skip - Number of records to skip.
+     * @param take - Number of records to take.
+     * @returns An object containing the results and per-key metrics.
      */
-    async getMultiple(storeName, keys) {
+    async readRowsWithPagination(storeName, storeMeta, skip, take) {
+        // Extract all keys from storeMeta (assuming storeMeta contains all keys)
+        const allKeys = Object.keys(storeMeta);
+        // Slice the keys array to get the paginated keys
+        const paginatedKeys = allKeys.slice(skip, skip + take);
+        // Use getMultipleByKeys to fetch the data
+        const { results, perKeyMetrics } = await this.getMultipleByKeys(storeName, paginatedKeys);
+        return { results, perKeyMetrics };
+    }
+    /**
+     * Helper method to handle fetching multiple records by keys.
+     *
+     * @param storeName - The target store name.
+     * @param keys - The array of keys (or wildcard patterns) to read.
+     * @returns An object containing the deserialized data array and per-key metrics.
+     */
+    async getMultipleByKeys(storeName, keys) {
         // Flush & retrieve store metadata
         const { storeMeta, keyMap, metrics } = await this.flushAndGetMetadata(storeName);
         // Expand any wildcard patterns
         const expandedKeys = this.expandAllWildcards(keys, keyMap);
-        // One readAllRows call that does exactly ONE mapAsync
+        // Read all rows based on expanded keys
         const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
         // Log or accumulate performance
         this.logPerformance(metrics, perKeyMetrics);
-        return results;
+        return { results, perKeyMetrics };
     }
     /**
      * Deletes data for a specific key from the GPU-backed store by batching the delete operation.
