@@ -217,7 +217,19 @@
                             <li>
                                 <a class="submenu-button" data-task="globalLandslideCatalog">Global Landslide Catalog Export</a>
                             </li>
-                        </ul>
+                            <li>
+                                <a class="submenu-button" data-task="causesOfDeath">NCHS - Leading Causes of Death: United States</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="babyNames">Popular Baby Names</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="youthTobacco">Youth Tobacco Survey (YTS) Data</a>
+                            </li>
+                            <li>
+                                <a class="submenu-button" data-task="lapdArrests">Arrest Data from 2020 to Present LAPD</a>
+                            </li>
+                       </ul>
                     </div>
                 </li>
             </ul>
@@ -317,11 +329,16 @@
             const taskLinks = document.querySelectorAll('.task-list a[data-task]');
             taskLinks.forEach(link => {
                 link.addEventListener('click', async (event) => {
+                    // Disable the link
+                    link.classList.add('disabled');
+                    link.style.pointerEvents = 'none';
+                    link.style.opacity = '0.5';
+                    link.textContent += ' (Loaded)';
+
                     event.preventDefault();
                     const task = link.getAttribute('data-task');
 
                     // Clear both console and code pane before each new task
-                    clearConsole();
                     clearCodePane();
 
                     switch (task) {
@@ -346,7 +363,7 @@
 
                         // The parent "consumePublicData" does nothing now
                         case 'consumePublicData':
-                            // intentionally left empty
+                             // intentionally left empty
                             break;
 
                         // Child links trigger dataset fetch/store
@@ -362,7 +379,18 @@
                         case 'globalLandslideCatalog':
                             await handlePublicJson('globalLandslideCatalog');
                             break;
-
+                        case 'causesOfDeath':
+                            await handlePublicJson('causesOfDeath');
+                            break;
+                        case 'babyNames':
+                            await handlePublicJson('babyNames');
+                            break;
+                        case 'youthTobacco':
+                            await handlePublicJson('youthTobacco');
+                            break;
+                        case 'lapdArrests':
+                            await handlePublicJson('lapdArrests');
+                            break;
                         default:
                             logToConsole(`[ERROR] Unknown task: ${task}`);
                             break;
@@ -1957,6 +1985,26 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     url: 'https://data.nasa.gov/api/views/dd9e-wu2v/rows.json?accessType=DOWNLOAD',
                     label: 'Global Landslide Catalog Export',
                     storeName: 'store-landslide'
+                },
+                causesOfDeath: {
+                    url: 'https://data.cdc.gov/api/views/bi63-dtpu/rows.json?accessType=DOWNLOAD',
+                    label: 'NCHS - Leading Causes of Death: United States',
+                    storeName: 'store-causes-death'
+                },
+                babyNames: {
+                    url: 'https://data.cityofnewyork.us/api/views/25th-nujf/rows.json?accessType=DOWNLOAD',
+                    label: 'Popular Baby Names',
+                    storeName: 'store-baby-names'
+                },
+                youthTobacco: {
+                    url: 'https://data.cdc.gov/api/views/4juz-x2tp/rows.json?accessType=DOWNLOAD',
+                    label: 'Youth Tobacco Survey (YTS) Data',
+                    storeName: 'store-youth-tobacco'
+                },
+                lapdArrests: {
+                    url: 'https://data.lacity.org/api/views/amvf-fr72/rows.json?accessType=DOWNLOAD',
+                    label: 'Arrest Data from 2020 to Present LAPD',
+                    storeName: 'store-lapd-arrests'
                 }
             };
 
@@ -1971,6 +2019,17 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             // Ensure GPU + VideoDB
             if (!device || !videoDB) {
                 await setupDevice();
+            }
+
+            if (!['store-lottery',
+                'store-mental-health',
+                'store-anxiety-depression',
+                'store-landslide',
+                'store-causes-death',
+                'store-baby-names',
+                'store-youth-tobacco',
+                'store-lapd-arrests'].some(substring => videoDB.listObjectStores().includes(substring))) {
+                clearConsole();
             }
 
             try {
