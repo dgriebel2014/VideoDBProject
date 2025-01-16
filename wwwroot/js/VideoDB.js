@@ -324,7 +324,7 @@ export class VideoDB {
         storeMeta.buffers = [];
         // Recreate a single new GPU buffer (index = 0)
         const newGpuBuffer = this.device.createBuffer({
-            size: storeMeta.bufferSize + 1024,
+            size: storeMeta.bufferSize,
             usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
             mappedAtCreation: false
         });
@@ -602,10 +602,11 @@ export class VideoDB {
         }
         // Otherwise, check the last buffer for available space
         const { lastBufferMeta, usedBytes } = this.getLastBufferUsage(storeMeta);
-        const capacity = storeMeta.bufferSize; // e.g. 250MB
+        const capacity = storeMeta.bufferSize;
         if (usedBytes + size <= capacity) {
             // There's enough space in the last buffer
-            return this.useSpaceInLastBuffer(lastBufferMeta, usedBytes, size);
+            // Now we pass storeMeta to useSpaceInLastBuffer
+            return this.useSpaceInLastBuffer(storeMeta, lastBufferMeta, usedBytes, size);
         }
         // Not enough space, so allocate a new buffer
         return this.allocateNewBufferChunk(storeMeta, size);
@@ -618,7 +619,7 @@ export class VideoDB {
      */
     createNewBuffer(storeMeta, size) {
         return this.device.createBuffer({
-            size: size + 1024,
+            size: size,
             usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
             mappedAtCreation: false
         });
@@ -661,22 +662,17 @@ export class VideoDB {
         const usedBytes = gpuBuffer._usedBytes || 0;
         return { lastBufferMeta, usedBytes };
     }
-    useSpaceInLastBuffer(lastBufferMeta, usedBytes, size) {
+    useSpaceInLastBuffer(storeMeta, // <-- Add this so we can call allocateNewBufferChunk
+    lastBufferMeta, usedBytes, size) {
         const gpuBuffer = lastBufferMeta.gpuBuffer;
         const ALIGNMENT = 256;
-        const OVERFLOW_ALLOWANCE = ALIGNMENT; // 256 bytes
         // Align the offset to the nearest multiple of ALIGNMENT (256)
         const alignedOffset = roundUp(usedBytes, ALIGNMENT);
-        // Define the maximum usable bytes before reserving the overflow
-        const maxUsableBytes = gpuBuffer.size - OVERFLOW_ALLOWANCE;
         // Check if alignedOffset + size exceeds the usable buffer size
-        if (alignedOffset + size > maxUsableBytes) {
-            console.log('_usedBytes', gpuBuffer._usedBytes);
-            console.log('alignedOffset + size', alignedOffset + size);
-            console.log('gpuBuffer.size', gpuBuffer.size);
-            throw new Error("No space left in the last buffer after alignment.");
+        if (alignedOffset + size > gpuBuffer.size) {
+            return this.allocateNewBufferChunk(storeMeta, size);
         }
-        // Update the used bytes and row count
+        // We have space; update the used bytes and row count
         gpuBuffer._usedBytes = alignedOffset + size;
         lastBufferMeta.rowCount += 1;
         const bufferIndex = lastBufferMeta.bufferIndex;
@@ -1064,7 +1060,7 @@ export class VideoDB {
     createBigReadBuffer(totalBytes, perKeyMetrics) {
         const createBufferStart = performance.now();
         const bigReadBuffer = this.device.createBuffer({
-            size: totalBytes + 1024,
+            size: totalBytes,
             usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
         perKeyMetrics.createBuffer = performance.now() - createBufferStart;
