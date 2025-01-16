@@ -793,7 +793,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
 
                     // Insert records
                     for (let r = 0; r < recordsPerStore; r++) {
-                        const key = `rec_${r}`;
+                        const key = `${r}`;
                         let value;
 
                         if (isJson) {
@@ -832,6 +832,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                     const { storeName, key, expected } = inMemoryData[idx];
                     const actual = await videoDB.get(storeName, key);
 
+                    debugger;
                     if (!compareValues(expected, actual)) {
                         mismatches++;
                         if (mismatches < 10) {
@@ -2054,7 +2055,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             }
 
             try {
-                logToConsole(`[TASK] Fetching dataset for "${label}"...`);
+                logToConsole(`[TASK] Fetching dataset for "${label}" from "${url}"...`);
 
                 // Fetch & parse data
                 const jsonRows = await fetchColumnsAndData(url);
