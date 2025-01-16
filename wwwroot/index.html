@@ -791,6 +791,9 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                             totalRows: recordsPerStore
                         };
 
+                    if (videoDB.listObjectStores().includes(storeName)) {
+                        videoDB.deleteObjectStore(storeName);
+                    }
                     videoDB.createObjectStore(storeName, storeOptions);
 
                     // Insert records

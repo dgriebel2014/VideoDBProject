@@ -10,6 +10,6 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@webgpu/types": "^0.1.52"
+    "@webgpu/types": "^0.1.53"
   }
 }
