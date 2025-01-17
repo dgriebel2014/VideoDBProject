@@ -193,14 +193,14 @@ export class VideoDB {
         await this.checkAndFlush();
     }
     /**
-    * Retrieves data for a specific key from the GPU-backed store by utilizing the getMultiple method.
-    * Ensures all pending writes are flushed before reading.
-    *
-    * @param {string} storeName - The name of the object store.
-    * @param {string} key - The unique key identifying the row.
-    * @returns {Promise<any | null>} A promise that resolves with the retrieved data or null if not found.
-    * @throws {Error} If the store does not exist.
-    */
+     * Retrieves data for a specific key from the GPU-backed store by utilizing the getMultiple method.
+     * Ensures all pending writes are flushed before reading.
+     *
+     * @param {string} storeName - The name of the object store.
+     * @param {string} key - The unique key identifying the row.
+     * @returns {Promise<any | null>} A promise that resolves with the retrieved data or null if not found.
+     * @throws {Error} If the store does not exist.
+     */
     async get(storeName, key) {
         // Call getMultiple with a single key
         const results = await this.getMultiple(storeName, [key]);
@@ -322,10 +322,11 @@ export class VideoDB {
         }
         // Clear the array of buffers
         storeMeta.buffers = [];
-        // Recreate a single new GPU buffer (index = 0)
+        // CHANGED: Recreate a single new GPU buffer with only COPY_SRC | COPY_DST
+        // REMOVED: MAP_WRITE
         const newGpuBuffer = this.device.createBuffer({
             size: storeMeta.bufferSize,
-            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, // CHANGED
             mappedAtCreation: false
         });
         // Add the newly created buffer to the store's metadata
@@ -341,32 +342,32 @@ export class VideoDB {
         this.updateStoreMetadata(storeMeta);
     }
     /**
-    * Opens a cursor for iterating over records in the specified object store.
-    *
-    * @param {string} storeName - The name of the object store to iterate over.
-    * @param {{
-    *   range?: {
-    *     lowerBound?: string;
-    *     upperBound?: string;
-    *     lowerInclusive?: boolean;
-    *     upperInclusive?: boolean;
-    *   };
-    *   direction?: 'next' | 'prev';
-    * }} [options] - Optional parameters to filter and control the iteration.
-    * @returns {AsyncGenerator<{ key: string; value: any }, void, unknown>} An async generator yielding key-value pairs.
-    * @throws {Error} If the specified store does not exist.
-    *
-    * @example
-    * for await (const record of videoDB.openCursor('MyStore')) {
-    *     console.log(record.key, record.value);
-    * }
-    *
-    * @example
-    * const range = { lowerBound: '100', upperBound: '200', lowerInclusive: true, upperInclusive: false };
-    * for await (const record of videoDB.openCursor('MyStore', { range, direction: 'prev' })) {
-    *     console.log(record.key, record.value);
-    * }
-    */
+     * Opens a cursor for iterating over records in the specified object store.
+     *
+     * @param {string} storeName - The name of the object store to iterate over.
+     * @param {{
+     *   range?: {
+     *     lowerBound?: string;
+     *     upperBound?: string;
+     *     lowerInclusive?: boolean;
+     *     upperInclusive?: boolean;
+     *   };
+     *   direction?: 'next' | 'prev';
+     * }} [options] - Optional parameters to filter and control the iteration.
+     * @returns {AsyncGenerator<{ key: string; value: any }, void, unknown>} An async generator yielding key-value pairs.
+     * @throws {Error} If the specified store does not exist.
+     *
+     * @example
+     * for await (const record of videoDB.openCursor('MyStore')) {
+     *     console.log(record.key, record.value);
+     * }
+     *
+     * @example
+     * const range = { lowerBound: '100', upperBound: '200', lowerInclusive: true, upperInclusive: false };
+     * for await (const record of videoDB.openCursor('MyStore', { range, direction: 'prev' })) {
+     *     console.log(record.key, record.value);
+     * }
+     */
     async *openCursor(storeName, options) {
         // Retrieve store metadata and keyMap
         const storeMeta = this.getStoreMetadata(storeName);
@@ -417,16 +418,11 @@ export class VideoDB {
         }
     }
     /**
-     * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched and optimized manner.
+     * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched manner.
      *
-     * This method performs the following steps:
-     * 1. Groups all pending writes by their target GPU buffer.
-     * 2. Sorts each group of writes by their byte offsets within the buffer.
-     * 3. Maps each GPU buffer once, writes all relevant data sequentially, and then unmaps.
-     * 4. Updates the associated row and store metadata accordingly.
-     *
-     * This approach ensures that multiple writes to the same buffer are handled efficiently,
-     * reducing the number of GPU buffer mappings and maximizing write throughput.
+     * CHANGED: Instead of mapping the target GPU buffer (which used MAP_WRITE),
+     * we now use the WebGPU `queue.writeBuffer(...)` to copy CPU data directly into the GPU buffer.
+     * This removes all direct `mapAsync` calls on our store buffers.
      *
      * @returns {Promise<void>} A promise that resolves once all pending writes have been applied.
      */
@@ -445,51 +441,41 @@ export class VideoDB {
         }
         // We'll track which writes succeeded
         const successfulWrites = new Set();
-        // For each GPU buffer, attempt to write
+        // For each GPU buffer, do a series of queue.writeBuffer
         for (const [gpuBuffer, writeGroup] of writesByBuffer.entries()) {
-            // Sort the group by offset
+            // Sort the group by offset (lowest → highest) to remain consistent
             writeGroup.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
-            try {
-                // Map once
-                await gpuBuffer.mapAsync(GPUMapMode.WRITE);
-                const mappedRange = gpuBuffer.getMappedRange();
-                const mappedView = new Uint8Array(mappedRange);
-                // For each write
-                for (const pendingWrite of writeGroup) {
-                    try {
-                        const { rowMetadata, arrayBuffer } = pendingWrite;
-                        mappedView.set(new Uint8Array(arrayBuffer), rowMetadata.offset);
-                        // If no error, mark as successful
-                        successfulWrites.add(pendingWrite);
-                    }
-                    catch (singleWriteError) {
-                        // Possibly keep it for retry or log it
-                        console.error('Error writing single item:', singleWriteError);
-                    }
+            for (const pendingWrite of writeGroup) {
+                try {
+                    const { rowMetadata, arrayBuffer } = pendingWrite;
+                    // CHANGED: Use queue.writeBuffer, not mapAsync
+                    this.device.queue.writeBuffer(gpuBuffer, rowMetadata.offset, arrayBuffer);
+                    successfulWrites.add(pendingWrite);
                 }
-                // Unmap
-                gpuBuffer.unmap();
-            }
-            catch (mapError) {
-                // If we can’t even map, everything in this group fails
-                console.error('Error mapping GPU buffer:', mapError);
+                catch (singleWriteError) {
+                    console.error('Error writing single item:', singleWriteError);
+                }
             }
         }
+        // If needed, ensure the commands complete
+        // (In basic WebGPU usage, queue.writeBuffer is immediate for CPU → GPU data,
+        // but you can await queue.onSubmittedWorkDone() if you need to ensure completion.)
+        // await this.device.queue.onSubmittedWorkDone();
         // Remove successful writes from pendingWrites
         this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
     }
     /**
-    * Applies a custom key range to filter the provided keys.
-    *
-    * @param {string[]} keys - The array of keys to filter.
-    * @param {{
-    *   lowerBound?: string;
-    *   upperBound?: string;
-    *   lowerInclusive?: boolean;
-    *   upperInclusive?: boolean;
-    * }} range - The key range to apply.
-    * @returns {string[]} The filtered array of keys that fall within the range.
-    */
+     * Applies a custom key range to filter the provided keys.
+     *
+     * @param {string[]} keys - The array of keys to filter.
+     * @param {{
+     *   lowerBound?: string;
+     *   upperBound?: string;
+     *   lowerInclusive?: boolean;
+     *   upperInclusive?: boolean;
+     * }} range - The key range to apply.
+     * @returns {string[]} The filtered array of keys that fall within the range.
+     */
     applyCustomRange(keys, range) {
         return keys.filter((key) => {
             let withinLower = true;
@@ -605,22 +591,21 @@ export class VideoDB {
         const capacity = storeMeta.bufferSize;
         if (usedBytes + size <= capacity) {
             // There's enough space in the last buffer
-            // Now we pass storeMeta to useSpaceInLastBuffer
             return this.useSpaceInLastBuffer(storeMeta, lastBufferMeta, usedBytes, size);
         }
         // Not enough space, so allocate a new buffer
         return this.allocateNewBufferChunk(storeMeta, size);
     }
     /**
-     * Creates a new GPU buffer for the given store metadata with the specified size.
+     * CHANGED: Now creates a buffer with COPY_SRC | COPY_DST (no MAP_WRITE / MAP_READ).
      * @param {StoreMetadata} storeMeta - The metadata of the store that requires a new GPU buffer.
-     * @param {number} size - The size of the new GPU buffer in bytes.
-     * @returns {GPUBuffer} The newly created GPU buffer.
+     * @param {number} size - The requested size (though we typically allocate storeMeta.bufferSize).
      */
     createNewBuffer(storeMeta, size) {
+        // REMOVED: GPUBufferUsage.MAP_WRITE
         return this.device.createBuffer({
-            size: size,
-            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            size: storeMeta.bufferSize,
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
             mappedAtCreation: false
         });
     }
@@ -628,8 +613,6 @@ export class VideoDB {
      * Allocates and initializes the very first buffer in the store.
      * @param {StoreMetadata} storeMeta - The metadata of the store where the buffer is being created.
      * @param {number} size - The initial number of bytes needed in the new buffer.
-     * @returns {{ gpuBuffer: GPUBuffer; bufferIndex: number; offset: number }}
-     *          An object containing the GPU buffer, its index, and the offset where data will be written.
      */
     allocateFirstBufferChunk(storeMeta, size) {
         const gpuBuffer = this.createNewBuffer(storeMeta, storeMeta.bufferSize);
@@ -640,7 +623,6 @@ export class VideoDB {
             rowCount: 0,
             gpuBuffer
         });
-        // Place data at offset 0
         gpuBuffer._usedBytes = size;
         storeMeta.buffers[0].rowCount += 1;
         return {
@@ -651,9 +633,6 @@ export class VideoDB {
     }
     /**
      * Retrieves usage information for the last buffer in the store.
-     * @param {StoreMetadata} storeMeta - The metadata of the store.
-     * @returns {{ lastBufferMeta: BufferMetadata; usedBytes: number }}
-     *          An object containing the last buffer's metadata and how many bytes have been used so far.
      */
     getLastBufferUsage(storeMeta) {
         const lastIndex = storeMeta.buffers.length - 1;
@@ -662,8 +641,7 @@ export class VideoDB {
         const usedBytes = gpuBuffer._usedBytes || 0;
         return { lastBufferMeta, usedBytes };
     }
-    useSpaceInLastBuffer(storeMeta, // <-- Add this so we can call allocateNewBufferChunk
-    lastBufferMeta, usedBytes, size) {
+    useSpaceInLastBuffer(storeMeta, lastBufferMeta, usedBytes, size) {
         const gpuBuffer = lastBufferMeta.gpuBuffer;
         const ALIGNMENT = 256;
         // Align the offset to the nearest multiple of ALIGNMENT (256)
@@ -672,7 +650,6 @@ export class VideoDB {
         if (alignedOffset + size > gpuBuffer.size) {
             return this.allocateNewBufferChunk(storeMeta, size);
         }
-        // We have space; update the used bytes and row count
         gpuBuffer._usedBytes = alignedOffset + size;
         lastBufferMeta.rowCount += 1;
         const bufferIndex = lastBufferMeta.bufferIndex;
@@ -684,10 +661,6 @@ export class VideoDB {
     }
     /**
      * Allocates a new buffer chunk if the last one does not have enough space.
-     * @param {StoreMetadata} storeMeta - The metadata of the store that needs a new buffer.
-     * @param {number} size - The number of bytes to reserve in the new buffer.
-     * @returns {{ gpuBuffer: GPUBuffer; bufferIndex: number; offset: number }}
-     *          An object containing the GPU buffer, its index, and the starting offset where data will be written.
      */
     allocateNewBufferChunk(storeMeta, size) {
         const newBufferIndex = storeMeta.buffers.length;
@@ -709,24 +682,18 @@ export class VideoDB {
     /**
      * Converts a given value into an ArrayBuffer based on the store's data type,
      * then pads it to 4 bytes (if needed) before returning.
-     *
-     * @param storeMeta - Metadata defining the store's dataType (JSON, TypedArray, or ArrayBuffer).
-     * @param value - The data to be serialized.
-     * @returns A 4-byte-aligned ArrayBuffer containing the serialized data.
      */
     serializeValueForStore(storeMeta, value) {
         let resultBuffer;
         switch (storeMeta.dataType) {
             case "JSON": {
-                // Existing JSON logic
                 let jsonString = JSON.stringify(value);
-                jsonString = padJsonTo4Bytes(jsonString); // Your existing JSON-specific string padding
+                jsonString = padJsonTo4Bytes(jsonString);
                 const cloned = new TextEncoder().encode(jsonString).slice();
                 resultBuffer = cloned.buffer;
                 break;
             }
             case "TypedArray": {
-                // For typed arrays, we just grab .buffer
                 if (!storeMeta.typedArrayType) {
                     throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
                 }
@@ -750,18 +717,8 @@ export class VideoDB {
         return padTo4Bytes(resultBuffer);
     }
     /**
-     * Finds or creates a RowMetadata entry for the given key. Unlike the previous version,
-     * this no longer does the actual GPU write. It only determines where the data
-     * should go (offset, bufferIndex) and updates CPU-side metadata. The GPU write is
-     * deferred until a flush operation.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the target store.
-     * @param {Map<string, number>} keyMap - A map of key-to-rowId for the store.
-     * @param {string} key - The unique key identifying the row.
-     * @param {ArrayBuffer} arrayBuffer - The data to be stored, already serialized/padded.
-     * @param {"add" | "put"} mode - "add" disallows overwrites, "put" allows them.
-     * @returns {Promise<RowMetadata>} A promise that resolves with the row’s metadata.
-     * @throws {Error} If the key already exists while in "add" mode.
+     * Finds or creates a RowMetadata entry for the given key.
+     * The GPU write is deferred until a flush operation.
      */
     async findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, mode) {
         let rowId = keyMap.get(key);
@@ -794,30 +751,21 @@ export class VideoDB {
     }
     /**
      * If the new data is larger than the existing row’s allocated space, this method
-     * deactivates the old row and finds a new location in the GPU buffer. Note that
-     * we do NOT write the data to the GPU here; we only choose the new offset.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the store.
-     * @param {RowMetadata} oldRowMeta - The existing row metadata to be overwritten.
-     * @param {ArrayBuffer} arrayBuffer - The new data (serialized/padded).
-     * @param {Map<string, number>} keyMap - The store’s key→rowId mapping.
-     * @param {string} key - The unique key for the row.
-     * @returns {Promise<RowMetadata>} The newly updated or created row metadata.
+     * deactivates the old row and finds a new location in the GPU buffer.
      */
     async updateRowOnOverwrite(storeMeta, oldRowMeta, arrayBuffer, keyMap, key) {
         // If the new data fits in the old space:
         if (arrayBuffer.byteLength <= oldRowMeta.length) {
-            // We'll overwrite in-place later during flushWrites.
-            // Just adjust length if the new data is smaller.
+            // Overwrite in-place later during flushWrites.
             if (arrayBuffer.byteLength < oldRowMeta.length) {
                 oldRowMeta.length = arrayBuffer.byteLength;
             }
             return oldRowMeta;
         }
         else {
-            // Mark old row inactive:
-            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
-            // Find new space for the bigger data:
+            // Mark old row inactive
+            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | ROW_INACTIVE_FLAG;
+            // Find new space for the bigger data
             const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
             const newRowId = storeMeta.rows.length + 1;
             const newRowMeta = {
@@ -828,17 +776,11 @@ export class VideoDB {
             };
             storeMeta.rows.push(newRowMeta);
             keyMap.set(key, newRowId);
-            // The actual GPU write is deferred until flushWrites().
             return newRowMeta;
         }
     }
     /**
      * Deserializes the raw data from the GPU buffer based on store metadata.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the store (dataType, typedArrayType, etc.).
-     * @param {Uint8Array} copiedData - The raw bytes read from the GPU buffer.
-     * @returns {any} The deserialized data (JSON, TypedArray, ArrayBuffer, etc.).
-     * @throws {Error} If the dataType is unknown or invalid.
      */
     deserializeData(storeMeta, copiedData) {
         switch (storeMeta.dataType) {
@@ -865,11 +807,6 @@ export class VideoDB {
     }
     /**
      * Retrieves the GPU buffer associated with the specified buffer index from the store's buffer metadata.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata of the store containing the buffer.
-     * @param {number} bufferIndex - The index of the buffer to retrieve.
-     * @returns {GPUBuffer} The GPU buffer at the specified index.
-     * @throws {Error} If the buffer is not found or is uninitialized.
      */
     getBufferByIndex(storeMeta, bufferIndex) {
         const bufMeta = storeMeta.buffers[bufferIndex];
@@ -880,21 +817,16 @@ export class VideoDB {
     }
     /**
      * Resets the flush timer to delay writing pending operations to the GPU.
-     * If a timer is already set, it clears it and starts a new one.
-     *
-     * @private
      */
     resetFlushTimer() {
-        // If a timer is already set, clear it
         if (this.flushTimer !== null) {
             clearTimeout(this.flushTimer);
         }
-        // Set a new timer
         this.flushTimer = window.setTimeout(() => {
             this.flushWrites().catch(error => {
                 console.error('Error during timed flushWrites:', error);
             });
-            this.flushTimer = null; // Reset the timer handle
+            this.flushTimer = null;
             this.isReady = true;
         }, 250);
     }
@@ -922,7 +854,6 @@ export class VideoDB {
     }
     /**
      * Flushes all pending writes, then retrieves the store metadata and key map.
-     * Also tracks performance time for these operations.
      */
     async flushAndGetMetadata(storeName) {
         const performanceMetrics = {
@@ -930,44 +861,31 @@ export class VideoDB {
             metadataRetrieval: 0,
         };
         const flushStart = performance.now();
-        await this.flushWrites(); // your method
+        await this.flushWrites();
         performanceMetrics.flushWrites = performance.now() - flushStart;
         const metadataStart = performance.now();
-        const storeMeta = this.getStoreMetadata(storeName); // throws if undefined
-        const keyMap = this.getKeyMap(storeName); // throws if undefined
+        const storeMeta = this.getStoreMetadata(storeName);
+        const keyMap = this.getKeyMap(storeName);
         performanceMetrics.metadataRetrieval = performance.now() - metadataStart;
         return { storeMeta, keyMap, metrics: performanceMetrics };
     }
     /**
      * Converts a SQL Server–style LIKE pattern into a RegExp.
-     * Supports the following:
-     *   - % => .*  (any string)
-     *   - _ => .   (any single character)
-     *   - [abc] => [abc] (character class)
-     *   - [^abc] => [^abc] (negated character class)
      */
     likeToRegex(pattern) {
-        // Escape special regex chars, except for our placeholders: %, _, [, ]
         let regexPattern = pattern
-            // Escape backslash first to avoid double-escape issues
             .replace(/\\/g, "\\\\")
-            // Escape everything else that might conflict with regex
             .replace(/[.+^${}()|[\]\\]/g, (char) => `\\${char}`)
-            // Convert SQL wildcards into regex equivalents
             .replace(/%/g, ".*")
             .replace(/_/g, ".");
-        // Because we escaped '[' and ']' above, we need to revert them
-        // for bracket expressions. We'll do a simple approach:
+        // revert bracket expressions
         regexPattern = regexPattern.replace(/\\\[(.*?)]/g, "[$1]");
-        // Build final anchored regex
-        return new RegExp(`^${regexPattern}$`, "u"); // "u" (Unicode) can help with extended chars
+        return new RegExp(`^${regexPattern}$`, "u");
     }
     /**
      * Expands a single key or wildcard pattern into all matching keys from the key map.
-     * If the string does not contain wildcard characters, returns array with just [key].
      */
     expandWildcard(key, keyMap) {
-        // Quick check for wildcard chars. If none, just return [key].
         if (!/[%_\[\]]/.test(key)) {
             return [key];
         }
@@ -979,53 +897,38 @@ export class VideoDB {
      * Applies expandWildcard to each item in the array and flattens the result.
      */
     expandAllWildcards(keys, keyMap) {
-        // This assumes you’ve created likeToRegex, expandWildcard, etc.
         return keys.flatMap((key) => this.expandWildcard(key, keyMap));
     }
     /**
-     * High-level method to read row data for a list of keys in a single GPU mapAsync call.
-     * Orchestrates all the steps to gather metadata, copy buffers, and deserialize the data.
-     *
-     * @param {string} storeName - The name of the store.
-     * @param {StoreMetadata} storeMeta - The metadata describing the store.
-     * @param {Map<string, any>} keyMap - A mapping of keys to row identifiers.
-     * @param {string[]} keys - The keys for which data is requested.
-     * @returns {Promise<{ results: (any | null)[]; perKeyMetrics: PerKeyMetrics }>}
-     *   An object containing the array of results and collected performance metrics.
+     * High-level method to read row data for a list of keys in a two-step copy process:
+     *  1) Copy from store buffers into a "big read buffer" (`bigReadBuffer`).
+     *  2) Copy from `bigReadBuffer` into a staging buffer which we then map for reading.
      */
     async readAllRows(storeName, storeMeta, keyMap, keys) {
         // Prepare the results array (initialized to null)
         const results = new Array(keys.length).fill(null);
         // Metrics structure
         const perKeyMetrics = this.initializeMetrics();
-        // Collect row metadata for each key
+        // Collect row metadata
         const { rowInfos, totalBytes } = this.collectRowInfos(keyMap, storeMeta, keys, results, perKeyMetrics);
         // Early exit if nothing to read
         if (rowInfos.length === 0) {
             return { results, perKeyMetrics };
         }
-        // Create a single large GPU buffer
+        // CHANGED: create "big read buffer" with COPY_SRC | COPY_DST (not MAP_READ).
         const bigReadBuffer = this.createBigReadBuffer(totalBytes, perKeyMetrics);
-        // Copy data from each row’s GPU buffer into the large buffer
+        // Step 1) copy data from each row’s GPU buffer into bigReadBuffer
         this.copyRowsIntoBigBuffer(rowInfos, storeMeta, bigReadBuffer, perKeyMetrics);
-        // Read all data at once (mapAsync, getMappedRange, unmap)
-        const bigCopiedData = await this.mapAndReadBuffer(bigReadBuffer, perKeyMetrics);
+        // Step 2) copy from bigReadBuffer into a staging buffer that we map
+        const bigCopiedData = await this.copyFromBigBufferToStaging(bigReadBuffer, totalBytes, perKeyMetrics);
         // Deserialize each row
         this.deserializeRows(rowInfos, storeMeta, bigCopiedData, results, perKeyMetrics);
-        // Cleanup the buffer
+        // Cleanup the bigReadBuffer
         bigReadBuffer.destroy();
         return { results, perKeyMetrics };
     }
     /**
      * Gathers row metadata (rowInfos) for each provided key.
-     * Also tracks total bytes to be copied.
-     *
-     * @param {Map<string, any>} keyMap - A mapping of keys to row IDs.
-     * @param {StoreMetadata} storeMeta - The store metadata, including rows.
-     * @param {string[]} keys - The list of keys to look up.
-     * @param {(any | null)[]} results - The results array to fill with data.
-     * @param {PerKeyMetrics} perKeyMetrics - The object tracking performance metrics.
-     * @returns {{ rowInfos: RowInfo[], totalBytes: number }} - The row metadata and the total size in bytes.
      */
     collectRowInfos(keyMap, storeMeta, keys, results, perKeyMetrics) {
         const findMetadataStart = performance.now();
@@ -1035,7 +938,6 @@ export class VideoDB {
             const key = keys[i];
             const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
             if (!rowMetadata) {
-                // If row not found, results[i] remains null
                 continue;
             }
             rowInfos.push({
@@ -1050,83 +952,69 @@ export class VideoDB {
         return { rowInfos, totalBytes };
     }
     /**
-    * Creates a single large GPU buffer for reading.
-    * Tracks time in the performance metrics.
-    *
-    * @param {number} totalBytes - The total size in bytes for all row data.
-    * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
-    * @returns {GPUBuffer} The newly created GPU buffer for reading.
-    */
+     * CHANGED: create "big read buffer" with COPY_SRC | COPY_DST, no MAP_READ.
+     */
     createBigReadBuffer(totalBytes, perKeyMetrics) {
         const createBufferStart = performance.now();
         const bigReadBuffer = this.device.createBuffer({
             size: totalBytes,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, // CHANGED
         });
         perKeyMetrics.createBuffer = performance.now() - createBufferStart;
         return bigReadBuffer;
     }
     /**
-     * Copies data from each row’s GPU buffer into a larger buffer for subsequent read.
-     *
-     * @param {RowInfo[]} rowInfos - Metadata about where each row resides in the final buffer.
-     * @param {StoreMetadata} storeMeta - The store's metadata, including buffer references.
-     * @param {GPUBuffer} bigReadBuffer - The destination GPU buffer for reads.
-     * @param {PerKeyMetrics} perKeyMetrics - Performance metrics object to update.
+     * Copies data from each row’s GPU buffer into the bigReadBuffer.
      */
     copyRowsIntoBigBuffer(rowInfos, storeMeta, bigReadBuffer, perKeyMetrics) {
         const copyBufferStart = performance.now();
         const commandEncoder = this.device.createCommandEncoder();
         for (const rowInfo of rowInfos) {
             const srcBuffer = this.getBufferByIndex(storeMeta, rowInfo.rowMetadata.bufferIndex);
-            commandEncoder.copyBufferToBuffer(srcBuffer, rowInfo.rowMetadata.offset, // source offset
-            bigReadBuffer, rowInfo.offsetInFinalBuffer, // dest offset
-            rowInfo.length);
+            commandEncoder.copyBufferToBuffer(srcBuffer, rowInfo.rowMetadata.offset, bigReadBuffer, rowInfo.offsetInFinalBuffer, rowInfo.length);
         }
-        // Submit the copy commands
         this.device.queue.submit([commandEncoder.finish()]);
         perKeyMetrics.copyBuffer = performance.now() - copyBufferStart;
     }
     /**
-     * Maps the buffer for reading, copies data to a Uint8Array, and unmaps it.
-     * Updates performance metrics accordingly.
-     *
-     * @param {GPUBuffer} bigReadBuffer - The GPU buffer holding the concatenated row data.
-     * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
-     * @returns {Promise<Uint8Array>} The copied data from the mapped buffer.
+     * CHANGED: Instead of `mapAsync` on bigReadBuffer, we do a copy to a staging buffer
+     * that we then map for reading. This eliminates direct mapAsync on the main read buffer.
      */
-    async mapAndReadBuffer(bigReadBuffer, perKeyMetrics) {
+    async copyFromBigBufferToStaging(bigReadBuffer, totalBytes, perKeyMetrics) {
         const mapBufferStart = performance.now();
-        // mapAsync
+        // 1) Create a staging buffer with COPY_DST | MAP_READ
+        const stagingBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        // 2) Copy from bigReadBuffer → stagingBuffer
+        const commandEncoder = this.device.createCommandEncoder();
+        commandEncoder.copyBufferToBuffer(bigReadBuffer, 0, stagingBuffer, 0, totalBytes);
+        this.device.queue.submit([commandEncoder.finish()]);
+        // Wait for GPU to finish so we can map the staging buffer
+        await this.device.queue.onSubmittedWorkDone();
+        // Now map the staging buffer for reading
         const mapAsyncStart = performance.now();
-        await bigReadBuffer.mapAsync(GPUMapMode.READ);
+        await stagingBuffer.mapAsync(GPUMapMode.READ);
         perKeyMetrics.mapBufferSubsections.mapAsync = performance.now() - mapAsyncStart;
         // getMappedRange
         const getMappedRangeStart = performance.now();
-        const fullMappedRange = bigReadBuffer.getMappedRange();
-        perKeyMetrics.mapBufferSubsections.getMappedRange =
-            performance.now() - getMappedRangeStart;
+        const fullMappedRange = stagingBuffer.getMappedRange();
+        perKeyMetrics.mapBufferSubsections.getMappedRange = performance.now() - getMappedRangeStart;
         // copyToUint8Array
         const copyToUint8ArrayStart = performance.now();
         const bigCopiedData = new Uint8Array(fullMappedRange.slice(0));
-        perKeyMetrics.mapBufferSubsections.copyToUint8Array =
-            performance.now() - copyToUint8ArrayStart;
+        perKeyMetrics.mapBufferSubsections.copyToUint8Array = performance.now() - copyToUint8ArrayStart;
         // unmap
         const unmapStart = performance.now();
-        bigReadBuffer.unmap();
+        stagingBuffer.unmap();
         perKeyMetrics.mapBufferSubsections.unmap = performance.now() - unmapStart;
+        stagingBuffer.destroy(); // We no longer need it
         perKeyMetrics.mapBuffer = performance.now() - mapBufferStart;
         return bigCopiedData;
     }
     /**
-     * Deserializes each row from the provided copied data according to the store metadata.
-     * Updates the results array in-place.
-     *
-     * @param {RowInfo[]} rowInfos - Array of metadata about each row location/length.
-     * @param {StoreMetadata} storeMeta - The store's metadata (dataType, typedArrayType, etc.).
-     * @param {Uint8Array} bigCopiedData - The full set of copied row bytes.
-     * @param {(any | null)[]} results - The array where deserialized results are placed.
-     * @param {PerKeyMetrics} perKeyMetrics - The metrics object to update.
+     * Deserializes each row from the provided copied data.
      */
     deserializeRows(rowInfos, storeMeta, bigCopiedData, results, perKeyMetrics) {
         const deserializeStart = performance.now();
@@ -1139,8 +1027,6 @@ export class VideoDB {
     }
     /**
      * Initializes and returns a fresh PerKeyMetrics object.
-     *
-     * @returns {PerKeyMetrics} - The initialized performance metrics object.
      */
     initializeMetrics() {
         return {
