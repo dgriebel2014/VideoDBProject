@@ -20,6 +20,29 @@
             padding: 16px;
         }
 
+        .noselect {
+            -webkit-touch-callout: none; /* iOS Safari */
+            -webkit-user-select: none; /* Safari */
+            -moz-user-select: none; /* Old versions of Firefox */
+            -ms-user-select: none; /* Internet Explorer/Edge */
+            user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome, Edge, Opera and Firefox */
+        }
+
+        /* The outer container that wraps pager + grid */
+        #outerContainer {
+            width: 95%;
+            margin: 0 auto; /* center horizontally in the page */
+            margin-top: 20px; /* some top spacing if desired */
+        }
+
+        /* The container that holds the scrollable table itself */
+        #gridContainer {
+            max-height: 800px; /* or any height you want for scrolling */
+            overflow-y: auto;
+            margin-top: 10px; /* spacing under the pager */
+        }
+
         /* Container for the three horizontal panels */
         .container {
             display: flex;
@@ -59,6 +82,17 @@
                 font-weight: bold;
                 cursor: pointer;
             }
+
+        .viewDataSet {
+            padding-right: 10px;
+            font-size: 0.7em;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+            font-weight: bold;
+            text-transform: uppercase;
+            position:relative;
+            left:0px;
+            padding-left:10px;
+        }
 
         .task-description {
             display: block;
@@ -214,7 +248,9 @@
                                 <a class="submenu-button" data-task="mentalHealthCare">Mental Health Care in the Last 4 Weeks</a>
                             </li>
                             <li>
-                                <a class="submenu-button" data-task="anxietyDepressionIndicators">Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms During Last 7 Days</a>
+                                <a class="submenu-button" data-task="anxietyDepressionIndicators">
+                                    Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms During Last 7 Days
+                                </a>
                             </li>
                             <li>
                                 <a class="submenu-button" data-task="causesOfDeath">NCHS - Leading Causes of Death: United States</a>
@@ -250,9 +286,11 @@
                 <p>No code to show. Select a task from the left panel.</p>
             </div>
 
-            <div id="grid" style="margin-top: 20px;"></div>
+            <div id="outerContainer">
+                <div id="grid" style="margin-top: 20px;"></div>
+            </div>
+            <hr />
         </div>
-        <hr />
     </div>
 
     <!-- Updated script block -->
@@ -342,10 +380,6 @@
                         'babyNames',
                         'youthTobacco',
                         'lapdArrests'].some(substring => task.includes(substring))) {
-                        link.classList.add('disabled');
-                        link.style.pointerEvents = 'none';
-                        link.style.opacity = '0.5';
-                        link.textContent += ' (Loaded)';
                     }
 
                     // Clear both console and code pane before each new task
@@ -2036,51 +2070,55 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             }
 
             try {
-                logToConsole(`[TASK] Fetching dataset for "${label}" from "${url}"...`);
+                if (!videoDB.listObjectStores().includes(storeName)) {
+                    logToConsole(`[TASK] Fetching dataset for "${label}" from "${url}"...`);
 
-                // Fetch & parse data
-                const jsonRows = await fetchColumnsAndData(url);
+                    // Fetch & parse data
+                    const jsonRows = await fetchColumnsAndData(url);
 
-                // Calculate total size
-                let totalBytes = 0;
-                for (const row of jsonRows) {
-                    const rowStr = JSON.stringify(row);
-                    totalBytes += new TextEncoder().encode(rowStr).length;
+                    // Calculate total size
+                    let totalBytes = 0;
+                    for (const row of jsonRows) {
+                        const rowStr = JSON.stringify(row);
+                        totalBytes += new TextEncoder().encode(rowStr).length;
+                    }
+                    const formattedSize = formatSize(totalBytes);
+
+                    // Create or re-create our store for these rows
+                    if (videoDB.listObjectStores().includes(storeName)) {
+                        videoDB.deleteObjectStore(storeName);
+                    }
+                    videoDB.createObjectStore(storeName, {
+                        dataType: "JSON",
+                        bufferSize: 10 * 1024 * 1024,
+                        totalRows: jsonRows.length
+                    });
+
+                    // Add each row
+                    let aKeys = [];
+                    for (let i = 0; i < jsonRows.length; i++) {
+                        aKeys.push(jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`);
+                        await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
+                    }
+
+                    // Wait until VideoDB is marked ready
+                    await new Promise(resolve => {
+                        const checkInterval = setInterval(() => {
+                            if (videoDB.isReady) {
+                                clearInterval(checkInterval);
+                                resolve();
+                            }
+                        }, 300);
+                    });
+
+                    logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}".`);
+                } else {
+                    logToConsole(`[SUCCESS] Viewing records in "${storeName}".`);
                 }
-                const formattedSize = formatSize(totalBytes);
-
-                // Create or re-create our store for these rows
-                if (videoDB.listObjectStores().includes(storeName)) {
-                    videoDB.deleteObjectStore(storeName);
-                }
-                videoDB.createObjectStore(storeName, {
-                    dataType: "JSON",
-                    bufferSize: 10 * 1024 * 1024,
-                    totalRows: jsonRows.length
-                });
-
-                // Add each row
-                let aKeys = [];
-                for (let i = 0; i < jsonRows.length; i++) {
-                    aKeys.push(jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`);
-                    await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
-                }
-
-                // Wait until VideoDB is marked ready
-                await new Promise(resolve => {
-                    const checkInterval = setInterval(() => {
-                        if (videoDB.isReady) {
-                            clearInterval(checkInterval);
-                            resolve();
-                        }
-                    }, 300);
-                });
 
                 // Now call setupJsGrid()
                 await setupGrid(storeName);
 
-                logToConsole(`[SUCCESS] Loaded ${jsonRows.length.toLocaleString()} rows (Total Size: ${formattedSize}) into "${storeName}".`);
-                logToConsole(`[INFO] Dataset label: "${label}"`);
                 logToConsole(``);
             } catch (error) {
                 logToConsole(`[ERROR] ${error.message}`);
@@ -2177,8 +2215,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
          *     The name of the VideoDB store to display.
          */
         async function setupGrid(storeName) {
-
-            // 1) Use storeMetadataMap to get totalRows (no openCursor, no iteration).
             const storeMeta = videoDB.storeMetadataMap.get(storeName);
             if (!storeMeta) {
                 logToConsole(`[ERROR] Store "${storeName}" not found in storeMetadataMap.`);
@@ -2192,92 +2228,227 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                 return;
             }
 
-            // Basic paging parameters
-            const pageSize = 10;
+            const pageSize = 20;
             const totalPages = Math.ceil(totalRows / pageSize);
             let currentPage = 1;
 
-            // Sorting is only for the current page's data
-            let sortState = {
-                column: null,
-                ascending: true
-            };
+            // (1) Instead of using only #grid, wrap everything in an 'outerContainer' 
+            // for the pager + the grid.
+            const outerContainer = document.getElementById('outerContainer');
+            outerContainer.innerHTML = ""; // Clear out any previous content
 
-            // Prepare container
-            const container = document.getElementById('grid');
-            container.innerHTML = ""; // clear
-            container.style.overflowX = "auto"; // horizontal scroll if wide
+            // Create and append a pagination div at the top
+            const paginationDiv = document.createElement('div');
+            paginationDiv.className = "noselect";
+            paginationDiv.style.position = "sticky";  // <--- 'sticky' to keep it at top
+            paginationDiv.style.top = "0";
+            paginationDiv.style.backgroundColor = "#fff";
+            paginationDiv.style.textAlign = "center";
+            paginationDiv.style.padding = "5px";
+            paginationDiv.style.boxShadow = "0 1px 2px rgba(0,0,0,0.15)";
+            paginationDiv.style.zIndex = "10";
 
-            // Create table
+            // Make the grid scrollable
+            const gridContainer = document.createElement('div');
+            gridContainer.id = "gridContainer";
+            gridContainer.style.overflowX = "auto";
+
+            // Append pager first, then grid
+            outerContainer.appendChild(paginationDiv);
+            outerContainer.appendChild(gridContainer);
+
+            // Now create the table inside the gridContainer
             const table = document.createElement('table');
             table.style.borderCollapse = "collapse";
             table.style.backgroundColor = "#fafafa";
             table.style.whiteSpace = "nowrap";
-            container.appendChild(table);
+            gridContainer.appendChild(table);
 
-            // Table sections
             const thead = document.createElement('thead');
             const headerRow = document.createElement('tr');
+            headerRow.style.paddingRight = "10px";
+            headerRow.style.fontSize = "0.8em";
+            headerRow.style.textShadow = "1px 1px 2px rgba(0, 0, 0, 0.2)";
+            headerRow.style.fontWeight = "bold";
+            headerRow.style.textTransform = "uppercase";
+            headerRow.style.textAlign = "left";
+
             thead.appendChild(headerRow);
             table.appendChild(thead);
 
             const tbody = document.createElement('tbody');
             table.appendChild(tbody);
 
-            // Pagination UI
-            const paginationDiv = document.createElement('div');
-            paginationDiv.style.marginTop = "10px";
-            paginationDiv.style.textAlign = "center";
-            container.appendChild(paginationDiv);
-
-            // Buttons + Page Info
+            // Create pagination buttons
+            const firstButton = document.createElement('button');
             const prevButton = document.createElement('button');
-            prevButton.textContent = "Previous Page";
-            prevButton.style.marginRight = "10px";
-
             const nextButton = document.createElement('button');
-            nextButton.textContent = "Next Page";
-            nextButton.style.marginRight = "10px";
-
+            const lastButton = document.createElement('button');
             const pageInfoSpan = document.createElement('span');
 
-            paginationDiv.appendChild(prevButton);
-            paginationDiv.appendChild(nextButton);
-            paginationDiv.appendChild(pageInfoSpan);
+            [firstButton, prevButton, nextButton, lastButton].forEach(button => {
+                button.style.marginRight = "10px";
+                button.style.fontSize = "0.7em";
+                button.style.height = "22px";
+                button.style.width = "60px";
+                button.style.textShadow = "1px 1px 2px rgba(0, 0, 0, 0.2)";
+                button.style.fontWeight = "bold";
+                button.style.textTransform = "uppercase";
+            });
 
-            // Button handlers
-            prevButton.addEventListener('click', async () => {
-                if (currentPage > 1) {
-                    currentPage--;
+            prevButton.title = nextButton.title = "Hold down the mouse button to skip multiple pages.";
+
+            pageInfoSpan.style.paddingRight = "10px";
+            pageInfoSpan.style.fontSize = "0.7em";
+            pageInfoSpan.style.textShadow = "1px 1px 2px rgba(0, 0, 0, 0.2)";
+            pageInfoSpan.style.fontWeight = "bold";
+            pageInfoSpan.style.textTransform = "uppercase";
+
+            firstButton.textContent = "FIRST";
+            prevButton.textContent = "PREV";
+            nextButton.textContent = "NEXT";
+            lastButton.textContent = "LAST";
+
+            paginationDiv.appendChild(firstButton);
+            paginationDiv.appendChild(prevButton);
+            paginationDiv.appendChild(pageInfoSpan);
+            paginationDiv.appendChild(nextButton);
+            paginationDiv.appendChild(lastButton);
+
+            // ---- Normal single-click for FIRST ----
+            firstButton.addEventListener('click', async () => {
+                if (currentPage !== 1) {
+                    currentPage = 1;
                     await renderPage(currentPage);
                 }
             });
-            nextButton.addEventListener('click', async () => {
-                if (currentPage < totalPages) {
-                    currentPage++;
+
+            // ---- Normal single-click for LAST ----
+            lastButton.addEventListener('click', async () => {
+                if (currentPage !== totalPages) {
+                    currentPage = totalPages;
                     await renderPage(currentPage);
                 }
+            });
+
+            // We will replace the single-click approach for PREV and NEXT
+            // with a hold-down approach. Let's define some helper variables.
+            let holdTimeout = null;       // For the 500ms hold
+            let autoPagingInterval = null;  // For the repeated paging once held
+            const HOLD_DELAY = 500;       // 500ms threshold
+            const PAGE_INTERVAL = 50;     // How fast to page once holding (ms)
+
+            /**
+             * Clears any active hold timeout or rapid-paging interval.
+             */
+            function clearPagingTimers() {
+                if (holdTimeout) {
+                    clearTimeout(holdTimeout);
+                    holdTimeout = null;
+                }
+                if (autoPagingInterval) {
+                    clearInterval(autoPagingInterval);
+                    autoPagingInterval = null;
+                }
+            }
+
+            /**
+             * Attempt to go one page forward/backward if possible.
+             * @param {number} direction +1 for next, -1 for prev
+             */
+            async function singlePage(direction) {
+                if (direction > 0) {
+                    // Next
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        await renderPage(currentPage);
+                    }
+                } else {
+                    // Prev
+                    if (currentPage > 1) {
+                        currentPage--;
+                        await renderPage(currentPage);
+                    }
+                }
+            }
+
+            /**
+             * Starts the rapid paging in a direction, paging as quickly as possible
+             * until the boundary is reached or the user releases the mouse.
+             * @param {number} direction +1 for next, -1 for prev
+             */
+            function startAutoPaging(direction) {
+                // Page immediately, then set interval for repeated paging
+                autoPagingInterval = setInterval(async () => {
+                    // If we are at the boundary, stop paging
+                    if ((direction > 0 && currentPage >= totalPages) ||
+                        (direction < 0 && currentPage <= 1)) {
+                        clearPagingTimers();
+                        return;
+                    }
+                    await singlePage(direction); // page one step
+                }, PAGE_INTERVAL);
+            }
+
+            // ----- PREV BUTTON -----
+            prevButton.addEventListener('mousedown', () => {
+                // Start the 500ms hold timer
+                holdTimeout = setTimeout(() => {
+                    // If user still holding after 500ms, start auto paging
+                    startAutoPaging(-1);
+                }, HOLD_DELAY);
+            });
+
+            // If user releases before 500ms, do a single page
+            prevButton.addEventListener('mouseup', async () => {
+                // If holdTimeout still exists, user didn't hold full 500ms
+                if (holdTimeout) {
+                    clearPagingTimers();
+                    await singlePage(-1);
+                } else {
+                    // They were already in auto-paging mode; stop paging
+                    clearPagingTimers();
+                }
+            });
+
+            // If mouse leaves the button, treat like mouseup (stop paging)
+            prevButton.addEventListener('mouseleave', () => {
+                clearPagingTimers();
+            });
+
+            // ----- NEXT BUTTON -----
+            nextButton.addEventListener('mousedown', () => {
+                holdTimeout = setTimeout(() => {
+                    startAutoPaging(1);
+                }, HOLD_DELAY);
+            });
+
+            nextButton.addEventListener('mouseup', async () => {
+                if (holdTimeout) {
+                    clearPagingTimers();
+                    await singlePage(1);
+                } else {
+                    clearPagingTimers();
+                }
+            });
+
+            nextButton.addEventListener('mouseleave', () => {
+                clearPagingTimers();
             });
 
             /**
-             * Main function to fetch & display a specific page from the store.
+             * Renders the given page number into the table.
+             * @param {number} pageNumber 
              */
             async function renderPage(pageNumber) {
-                // Compute skip/take
                 const skip = (pageNumber - 1) * pageSize;
                 const take = pageSize;
-
-                // Fetch only that page's data
                 let pageData = await videoDB.getMultiple(storeName, skip, take);
                 pageData = pageData.filter(item => item !== null);
 
-                // If we have no columns defined yet, define them from the first row
-                // (Only columns that start with uppercase letter)
                 if (columns.length === 0 && pageData.length > 0) {
                     columns = Object.keys(pageData[0]).filter(k => /^[A-Z]/.test(k));
-
-                    // Build the <thead>
-                    headerRow.innerHTML = ""; // clear if previously built
+                    headerRow.innerHTML = "";
                     columns.forEach(colName => {
                         const th = document.createElement('th');
                         th.textContent = colName;
@@ -2286,7 +2457,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         th.style.padding = "8px";
                         th.style.whiteSpace = "nowrap";
 
-                        // Sort within the page on click
                         th.addEventListener('click', () => {
                             if (sortState.column === colName) {
                                 sortState.ascending = !sortState.ascending;
@@ -2294,7 +2464,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 sortState.column = colName;
                                 sortState.ascending = true;
                             }
-                            // Re-render same page
                             renderPage(pageNumber);
                         });
 
@@ -2302,19 +2471,23 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     });
                 }
 
-                // If we have a sort column, sort the data in-page
                 if (sortState.column) {
                     const { column, ascending } = sortState;
                     pageData.sort((a, b) => {
                         const valA = a[column];
                         const valB = b[column];
-                        if (valA < valB) return ascending ? -1 : 1;
-                        if (valA > valB) return ascending ? 1 : -1;
-                        return 0;
+                        return valA < valB
+                            ? ascending
+                                ? -1
+                                : 1
+                            : valA > valB
+                                ? ascending
+                                    ? 1
+                                    : -1
+                                : 0;
                     });
                 }
 
-                // Render table rows
                 tbody.innerHTML = "";
                 pageData.forEach(rowObj => {
                     const tr = document.createElement('tr');
@@ -2323,30 +2496,21 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         td.style.borderBottom = "1px solid #eee";
                         td.style.padding = "6px";
                         td.style.whiteSpace = "nowrap";
-
-                        const val = (rowObj[colName] && typeof rowObj[colName] === "object")
-                            ? JSON.stringify(rowObj[colName])
-                            : rowObj[colName];
-                        td.textContent = val !== undefined ? val : "";
+                        td.textContent = rowObj[colName] || "";
                         tr.appendChild(td);
                     });
                     tbody.appendChild(tr);
                 });
 
-                pageInfoSpan.textContent =
-                    `Page ${formatNumber(pageNumber)} of ${formatNumber(totalPages)} ` +
-                    `(${formatNumber(totalRows)} total rows)`;
+                pageInfoSpan.textContent = `Page ${formatNumber(pageNumber)} of ${formatNumber(totalPages)} (${formatNumber(totalRows)} total rows)`;
             }
 
-            // We’ll populate columns dynamically once we fetch the first page
             let columns = [];
+            let sortState = { column: null, ascending: true };
 
-            // Start on page #1
+            // Initial render
             await renderPage(currentPage);
 
-            /**
-             * Simple integer formatter with commas
-             */
             function formatNumber(num) {
                 return num.toLocaleString();
             }
