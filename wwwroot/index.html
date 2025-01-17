@@ -667,8 +667,6 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                 await setupDevice();
             }
 
-            debugger;
-
             try {
                 // 1) JSON store
                 await manageSingleStore(
@@ -1425,24 +1423,24 @@ videoDB.clear("reallyFakeStore");<br />
                     }
                 }
 
-                // 5s add
-                const addRate = await runPerfPhase(name, "add", dataObj, 5000);
-                const addOps = Math.floor(addRate * 5); // Approximate total adds
+                const addSeconds = 5;
+
+                const addRate = await runPerfPhase(name, "add", dataObj, addSeconds * 1000);
+                const addOps = Math.floor(addRate * addSeconds); // Approximate total adds
                 totalAddOps += addOps;
 
-                // 5s put
-                const putRate = await runPerfPhase(name, "put", dataObj, 5000);
-                const putOps = Math.floor(putRate * 5); // Approximate total puts
+                const putRate = await runPerfPhase(name, "put", dataObj, addSeconds * 1000);
+                const putOps = Math.floor(putRate * addSeconds); // Approximate total puts
                 totalPutOps += putOps;
 
-                // 5s delete
-                const delRate = await runDeletePhase(name, 5000);
-                const delOps = Math.floor(delRate * 5); // Approximate total deletes
+                const delRate = await runDeletePhase(name, addSeconds * 1000);
+                const delOps = Math.floor(delRate * addSeconds); // Approximate total deletes
                 totalDelOps += delOps;
 
                 perfResults.push({ store: name, addRate, putRate, delRate });
 
                 logToConsole("");
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
 
             // Calculate total data transferred (excluding DELETE operations)
@@ -1516,6 +1514,7 @@ videoDB.clear("reallyFakeStore");<br />
                     }
                 } catch {
                     // e.g. collision on add -> ignore
+                    logToConsole(`[ERROR] Collision on add`);
                 }
                 count++;
             }
