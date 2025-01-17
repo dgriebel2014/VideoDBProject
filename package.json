@@ -11,5 +11,8 @@
   "license": "ISC",
   "devDependencies": {
     "@webgpu/types": "^0.1.53"
+  },
+  "dependencies": {
+    "tabulator-tables": "^6.3.0"
   }
 }

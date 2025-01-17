@@ -3,22 +3,9 @@
 <head>
     <link rel="icon" href="favicon.ico" type="image/x-icon">
     
-    <!-- CSS for jsGrid -->
-    <link href="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid-theme.min.css" rel="stylesheet">
-    
-    <!-- JS for jsGrid -->
-    <script src="https://cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsgrid/dist/jsgrid.min.js"></script>
-
     <meta charset="UTF-8" />
     <title>VideoDB Demo</title>
     <style>
-        #jsGrid {
-            margin: 20px;
-            width: 90%;
-        }
-
         /* Basic reset and font */
         * {
             box-sizing: border-box;
@@ -230,9 +217,6 @@
                                 <a class="submenu-button" data-task="anxietyDepressionIndicators">Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms During Last 7 Days</a>
                             </li>
                             <li>
-                                <a class="submenu-button" data-task="globalLandslideCatalog">Global Landslide Catalog Export</a>
-                            </li>
-                            <li>
                                 <a class="submenu-button" data-task="causesOfDeath">NCHS - Leading Causes of Death: United States</a>
                             </li>
                             <li>
@@ -266,10 +250,8 @@
                 <p>No code to show. Select a task from the left panel.</p>
             </div>
 
-            <!-- Placeholder for jsGrid table -->
-            <div id="jsGridContainer" style="margin-top: 20px;"></div>
+            <div id="grid" style="margin-top: 20px;"></div>
         </div>
-
         <hr />
     </div>
 
@@ -401,9 +383,6 @@
                             break;
                         case 'anxietyDepressionIndicators':
                             await handlePublicJson('anxietyDepressionIndicators');
-                            break;
-                        case 'globalLandslideCatalog':
-                            await handlePublicJson('globalLandslideCatalog');
                             break;
                         case 'causesOfDeath':
                             await handlePublicJson('causesOfDeath');
@@ -653,6 +632,8 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             if (!device || !videoDB) {
                 await setupDevice();
             }
+
+            debugger;
 
             try {
                 // 1) JSON store
@@ -2008,11 +1989,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     label: 'Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms',
                     storeName: 'store-anxiety-depression'
                 },
-                globalLandslideCatalog: {
-                    url: 'https://data.nasa.gov/api/views/dd9e-wu2v/rows.json?accessType=DOWNLOAD',
-                    label: 'Global Landslide Catalog Export',
-                    storeName: 'store-landslide'
-                },
                 causesOfDeath: {
                     url: 'https://data.cdc.gov/api/views/bi63-dtpu/rows.json?accessType=DOWNLOAD',
                     label: 'NCHS - Leading Causes of Death: United States',
@@ -2101,7 +2077,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                 });
 
                 // Now call setupJsGrid()
-                // await setupJsGrid(storeName);
+                await setupGrid(storeName);
 
                 logToConsole(`[SUCCESS] Loaded ${jsonRows.length.toLocaleString()} rows (Total Size: ${formattedSize}) into "${storeName}".`);
                 logToConsole(`[INFO] Dataset label: "${label}"`);
@@ -2189,39 +2165,191 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             });
         }
 
-        async function setupJsGrid(storeName) {
-            // 1) Fetch the first 10 rows
-            const data = await videoDB.getMultiple(storeName, 0, 10);
+        /**
+         * Builds a paginated grid without opening cursors or fetching 100 rows.
+         * 
+         * Steps:
+         *   1) Get totalRows from videoDB.storeMetadataMap (no openCursor).
+         *   2) Render one page at a time using getMultiple(storeName, skip, take).
+         *   3) Show "Page X of Y (Z total rows)" with comma separators.
+         *
+         * @param {string} storeName
+         *     The name of the VideoDB store to display.
+         */
+        async function setupGrid(storeName) {
 
-            // 2) Find the first non-null row to define columns
-            const sampleRow = data.find(item => item !== null);
-            if (!sampleRow) {
-                logToConsole(`[INFO] No data found in store "${storeName}" to build jsGrid columns.`);
+            // 1) Use storeMetadataMap to get totalRows (no openCursor, no iteration).
+            const storeMeta = videoDB.storeMetadataMap.get(storeName);
+            if (!storeMeta) {
+                logToConsole(`[ERROR] Store "${storeName}" not found in storeMetadataMap.`);
                 return;
             }
 
-            // 3) Build columns from object keys
-            const fields = Object.keys(sampleRow).map(key => ({
-                name: key,
-                type: "text"
-            }));
+            const totalRows = storeMeta.totalRows || 0;
+            if (totalRows === 0) {
+                logToConsole(`[INFO] Store "${storeName}" has 0 rows.`);
+                document.getElementById('grid').innerHTML = "<p>No data available.</p>";
+                return;
+            }
 
-            // 4) Initialize jsGrid with the loaded data
-            $("#jsGridContainer").jsGrid({
-                width: "100%",
-                height: "400px",
+            // Basic paging parameters
+            const pageSize = 10;
+            const totalPages = Math.ceil(totalRows / pageSize);
+            let currentPage = 1;
 
-                inserting: false,
-                editing: false,
-                sorting: true,
-                paging: false, // we can handle real paging later
+            // Sorting is only for the current page's data
+            let sortState = {
+                column: null,
+                ascending: true
+            };
 
-                data: data.filter(item => item !== null), // remove any null placeholders
-                fields: fields
+            // Prepare container
+            const container = document.getElementById('grid');
+            container.innerHTML = ""; // clear
+            container.style.overflowX = "auto"; // horizontal scroll if wide
+
+            // Create table
+            const table = document.createElement('table');
+            table.style.borderCollapse = "collapse";
+            table.style.backgroundColor = "#fafafa";
+            table.style.whiteSpace = "nowrap";
+            container.appendChild(table);
+
+            // Table sections
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            table.appendChild(tbody);
+
+            // Pagination UI
+            const paginationDiv = document.createElement('div');
+            paginationDiv.style.marginTop = "10px";
+            paginationDiv.style.textAlign = "center";
+            container.appendChild(paginationDiv);
+
+            // Buttons + Page Info
+            const prevButton = document.createElement('button');
+            prevButton.textContent = "Previous Page";
+            prevButton.style.marginRight = "10px";
+
+            const nextButton = document.createElement('button');
+            nextButton.textContent = "Next Page";
+            nextButton.style.marginRight = "10px";
+
+            const pageInfoSpan = document.createElement('span');
+
+            paginationDiv.appendChild(prevButton);
+            paginationDiv.appendChild(nextButton);
+            paginationDiv.appendChild(pageInfoSpan);
+
+            // Button handlers
+            prevButton.addEventListener('click', async () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    await renderPage(currentPage);
+                }
+            });
+            nextButton.addEventListener('click', async () => {
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    await renderPage(currentPage);
+                }
             });
 
-            // Optionally log or highlight in the code pane
-            logCommandToConsole(`jsGrid has been initialized for "${storeName}" with 10 rows.`);
+            /**
+             * Main function to fetch & display a specific page from the store.
+             */
+            async function renderPage(pageNumber) {
+                // Compute skip/take
+                const skip = (pageNumber - 1) * pageSize;
+                const take = pageSize;
+
+                // Fetch only that page's data
+                let pageData = await videoDB.getMultiple(storeName, skip, take);
+                pageData = pageData.filter(item => item !== null);
+
+                // If we have no columns defined yet, define them from the first row
+                // (Only columns that start with uppercase letter)
+                if (columns.length === 0 && pageData.length > 0) {
+                    columns = Object.keys(pageData[0]).filter(k => /^[A-Z]/.test(k));
+
+                    // Build the <thead>
+                    headerRow.innerHTML = ""; // clear if previously built
+                    columns.forEach(colName => {
+                        const th = document.createElement('th');
+                        th.textContent = colName;
+                        th.style.borderBottom = "1px solid #ccc";
+                        th.style.cursor = "pointer";
+                        th.style.padding = "8px";
+                        th.style.whiteSpace = "nowrap";
+
+                        // Sort within the page on click
+                        th.addEventListener('click', () => {
+                            if (sortState.column === colName) {
+                                sortState.ascending = !sortState.ascending;
+                            } else {
+                                sortState.column = colName;
+                                sortState.ascending = true;
+                            }
+                            // Re-render same page
+                            renderPage(pageNumber);
+                        });
+
+                        headerRow.appendChild(th);
+                    });
+                }
+
+                // If we have a sort column, sort the data in-page
+                if (sortState.column) {
+                    const { column, ascending } = sortState;
+                    pageData.sort((a, b) => {
+                        const valA = a[column];
+                        const valB = b[column];
+                        if (valA < valB) return ascending ? -1 : 1;
+                        if (valA > valB) return ascending ? 1 : -1;
+                        return 0;
+                    });
+                }
+
+                // Render table rows
+                tbody.innerHTML = "";
+                pageData.forEach(rowObj => {
+                    const tr = document.createElement('tr');
+                    columns.forEach(colName => {
+                        const td = document.createElement('td');
+                        td.style.borderBottom = "1px solid #eee";
+                        td.style.padding = "6px";
+                        td.style.whiteSpace = "nowrap";
+
+                        const val = (rowObj[colName] && typeof rowObj[colName] === "object")
+                            ? JSON.stringify(rowObj[colName])
+                            : rowObj[colName];
+                        td.textContent = val !== undefined ? val : "";
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+
+                pageInfoSpan.textContent =
+                    `Page ${formatNumber(pageNumber)} of ${formatNumber(totalPages)} ` +
+                    `(${formatNumber(totalRows)} total rows)`;
+            }
+
+            // We’ll populate columns dynamically once we fetch the first page
+            let columns = [];
+
+            // Start on page #1
+            await renderPage(currentPage);
+
+            /**
+             * Simple integer formatter with commas
+             */
+            function formatNumber(num) {
+                return num.toLocaleString();
+            }
         }
 
         // Initialize the demo page once the DOM is ready
