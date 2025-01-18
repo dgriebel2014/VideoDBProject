@@ -66,10 +66,23 @@ export class VideoDB {
      * @param {string} storeName - The name of the store to create.
      * @param {{
      *   dataType: "TypedArray" | "ArrayBuffer" | "JSON";
-     *   typedArrayType?: "Float32Array" | "Float64Array" | "Int32Array" | "Uint32Array" | "Uint8Array";
+     *   typedArrayType?:
+     *     | "Float32Array"
+     *     | "Float64Array"
+     *     | "Int32Array"
+     *     | "Uint32Array"
+     *     | "Uint8Array";
      *   bufferSize: number;
      *   rowSize?: number;
      *   totalRows: number;
+     *   sortDefinition?: {
+     *     name: string;
+     *     sortFields: {
+     *       sortColumn: string;
+     *       path: string;
+     *       sortDirection: "Asc" | "Desc";
+     *     }[];
+     *   }[];
      * }} options - The configuration options for the new store.
      * @returns {void} This method does not return anything.
      * @throws {Error} If the store already exists or the typedArrayType is missing when dataType is "TypedArray".
@@ -82,6 +95,7 @@ export class VideoDB {
             throw new Error(`typedArrayType is required when dataType is "TypedArray".`);
         }
         let rowsPerBuffer;
+        // If it's not JSON and rowSize was specified, compute how many rows fit into bufferSize
         if (options.dataType !== "JSON" && options.rowSize) {
             rowsPerBuffer = Math.floor(options.bufferSize / options.rowSize);
         }
@@ -97,7 +111,9 @@ export class VideoDB {
             rows: [],
             metadataBuffer: undefined,
             dirtyMetadata: false,
-            metadataVersion: 0
+            metadataVersion: 0,
+            // Assign sort definitions if provided
+            sortDefinition: options.sortDefinition ?? []
         };
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
