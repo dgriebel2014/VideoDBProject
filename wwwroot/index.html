@@ -46,9 +46,12 @@
         /* Container for the three horizontal panels */
         .container {
             display: flex;
+            flex: 0 0 25%;
+            min-width: 80px; /* newly added */
             flex-direction: row;
-            gap: 16px;
-            height: 80vh; /* Adjust as needed */
+            gap: 0; /* was 16px */
+            height: 80vh;
+            width: 100%; /* optional to ensure full width */
         }
 
         /* Left panel (List of tasks) */
@@ -104,6 +107,7 @@
         /* Middle panel (Console) */
         .panel-middle {
             flex: 0 0 35%;
+            min-width: 80px; /* newly added */
             background-color: #fff;
             border: 1px solid #ccc;
             border-radius: 4px;
@@ -129,9 +133,17 @@
             font-size: 0.9em;
         }
 
+        /* New class for the vertical resizer bars */
+        .resizer {
+            width: 5px;
+            cursor: col-resize;
+            background-color: #ccc;
+        }
+
         /* Right panel (Code Snippets) */
         .panel-right {
             flex: 1;
+            min-width: 80px; /* newly added */
             background-color: #fff;
             border: 1px solid #ccc;
             border-radius: 4px;
@@ -270,6 +282,8 @@
             </ul>
         </div>
 
+        <div class="resizer" id="resizer-left-middle"></div>
+
         <!-- Middle Panel: Console Output -->
         <div class="panel-middle">
             <h2>Console View</h2>
@@ -277,6 +291,8 @@
                 <!-- Textual messages from tasks appear here. -->
             </div>
         </div>
+
+        <div class="resizer" id="resizer-middle-right"></div>
 
         <!-- Right Panel: Code Snippets -->
         <div class="panel-right">
@@ -1550,6 +1566,63 @@ videoDB.clear("reallyFakeStore");<br />
             return rate;
         }
 
+        function makeResizablePanels() {
+            const leftPanel = document.querySelector('.panel-left');
+            const middlePanel = document.querySelector('.panel-middle');
+            // const rightPanel = document.querySelector('.panel-right'); 
+            // (You only need rightPanel if you want more advanced logic, 
+            //  otherwise the middle resizer alone is enough.)
+
+            const resizerLM = document.getElementById('resizer-left-middle');
+            const resizerMR = document.getElementById('resizer-middle-right');
+
+            // --- Resizer between left & middle ---
+            resizerLM.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                let startX = e.clientX;
+                const startWidthLeft = leftPanel.getBoundingClientRect().width;
+
+                function onMouseMove(e) {
+                    const dx = e.clientX - startX;
+                    const newWidthLeft = startWidthLeft + dx;
+                    if (newWidthLeft > 50) { // a minimum width
+                        leftPanel.style.flexBasis = newWidthLeft + 'px';
+                    }
+                }
+
+                function onMouseUp() {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            // --- Resizer between middle & right ---
+            resizerMR.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                let startX = e.clientX;
+                const startWidthMiddle = middlePanel.getBoundingClientRect().width;
+
+                function onMouseMove(e) {
+                    const dx = e.clientX - startX;
+                    const newWidthMiddle = startWidthMiddle + dx;
+                    if (newWidthMiddle > 50) {
+                        middlePanel.style.flexBasis = newWidthMiddle + 'px';
+                    }
+                }
+
+                function onMouseUp() {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        }
+
         /**
          * Displays the updated VideoDB class documentation in the right pane.
          */
@@ -2250,6 +2323,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             paginationDiv.style.padding = "5px";
             paginationDiv.style.boxShadow = "0 1px 2px rgba(0,0,0,0.15)";
             paginationDiv.style.zIndex = "10";
+            paginationDiv.style.whiteSpace = "nowrap";
 
             // Make the grid scrollable
             const gridContainer = document.createElement('div');
@@ -2518,9 +2592,9 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             }
         }
 
-        // Initialize the demo page once the DOM is ready
         window.addEventListener('DOMContentLoaded', () => {
             initDemoPage();
+            makeResizablePanels();
         });
     </script>
 </body>
