@@ -83,7 +83,7 @@ VideoDB leverages WebGPU on this high-end hardware, demonstrating that massive t
 
 ### Importing VideoDB
 
-If you�re using a module-based environment (e.g., ES6 or TypeScript):
+If you're using a module-based environment (e.g., ES6 or TypeScript):
 
 ```
 import { VideoDB } from 'videodb';
