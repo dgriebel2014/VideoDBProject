@@ -1,45 +1,40 @@
-﻿VideoDB README 
+﻿# VideoDB README
 
-January 17, 2025 Update
-I’ve overhauled the GPU buffer usage flags so that VideoDB now allocates its 
-memory directly in main VRAM, rather than relying on shared system memory. 
-Previously, buffers were placed in repurposed system RAM. With this change, 
-the GPU holds VideoDB data fully on its own hardware, helping preserve bandwidth 
-and reduce latency for large or frequently accessed datasets.
+**January 17, 2025 Update**
 
-Performance Tip:
-Run a stress test while keeping your system’s performance monitor open to watch 
-GPU usage. You can also leave it open when paging through a large dataset—just 
-hold down the Next button—and see the GPU actively working to serve your data.
-As of this writing, the VideoDB project is less than 72 hours old and remains 
-under active development. Expect rapid changes and frequent updates.
+I’ve overhauled the GPU buffer usage flags so that VideoDB now allocates its memory directly in main VRAM, rather than relying on shared system memory. Previously, buffers were placed in repurposed system RAM. With this change, the GPU holds VideoDB data fully on its own hardware, helping preserve bandwidth and reduce latency for large or frequently accessed datasets.
 
-See a demo here -> https://dgriebel2014.github.io/VideoDBProject/
+## Performance Tip
 
-Benchmarks Overview
-Stress Test (1 KB rows)
-Add: Up to ~500K records/sec (that’s ~500 MB/s of data!)
-Put: ~10K records/sec
-Delete: 15K–20K records/sec
-Total Data Moved (Add + Put): Over 8 GB
+Run a stress test while keeping your system’s performance monitor open to watch GPU usage. You can also leave it open when paging through a large dataset—just hold down the Next button—and see the GPU actively working to serve your data.
 
-Accuracy & GET Benchmark
-Single-Record GET: ~300+ records/sec (sequential or random)
-Batched GET: Up to ~200K records/sec (contiguous)
+As of this writing, the VideoDB project is less than 72 hours old and remains under active development. Expect rapid changes and frequent updates.
 
-Key Takeaway: Bulk operations drastically improve throughput—so reading with 
-getMultiple([...]) can reach hundreds of thousands of gets per second!
+**See a demo here** -> [VideoDB Project Demo](https://dgriebel2014.github.io/VideoDBProject/)
 
-System Specs
-Model: Alienware Aurora R12
-CPU: 11th Gen Intel® Core™ i9-11900KF (8 cores / 16 threads)
-RAM: 128 GB
-GPU: NVIDIA GeForce RTX 3090
-OS: Windows 11 Home (10.0.22631 Build 22631)
+## Benchmarks Overview
 
-VideoDB leverages WebGPU on this high-end hardware, demonstrating that 
-massive throughput in a browser-based data store is achievable for both 
-write-intensive and read-intensive workloads.
+### Stress Test (1 KB rows)
+- **Add:** Up to ~500K records/sec (that’s ~500 MB/s of data!)
+- **Put:** ~10K records/sec
+- **Delete:** 15K–20K records/sec
+- **Total Data Moved (Add + Put):** Over 8 GB
+
+### Accuracy & GET Benchmark
+- **Single-Record GET:** ~300+ records/sec (sequential or random)
+- **Batched GET:** Up to ~200K records/sec (contiguous)
+
+**Key Takeaway:** Bulk operations drastically improve throughput—so reading with `getMultiple([...])` can reach hundreds of thousands of gets per second!
+
+## System Specs
+
+- **Model:** Alienware Aurora R12
+- **CPU:** 11th Gen Intel® Core™ i9-11900KF (8 cores / 16 threads)
+- **RAM:** 128 GB
+- **GPU:** NVIDIA GeForce RTX 3090
+- **OS:** Windows 11 Home (10.0.22631 Build 22631)
+
+VideoDB leverages WebGPU on this high-end hardware, demonstrating that massive throughput in a browser-based data store is achievable for both write-intensive and read-intensive workloads.
 
 # VideoDB
 
