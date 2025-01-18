@@ -1,6 +1,18 @@
 ﻿VideoDB README 
 
-As of this writing, the VideoDB project is less than 72 hours old and remains under active development. Expect rapid changes and frequent updates.
+January 17, 2025 Update
+I’ve overhauled the GPU buffer usage flags so that VideoDB now allocates its 
+memory directly in main VRAM, rather than relying on shared system memory. 
+Previously, buffers were placed in repurposed system RAM. With this change, 
+the GPU holds VideoDB data fully on its own hardware, helping preserve bandwidth 
+and reduce latency for large or frequently accessed datasets.
+
+Performance Tip:
+Run a stress test while keeping your system’s performance monitor open to watch 
+GPU usage. You can also leave it open when paging through a large dataset—just 
+hold down the Next button—and see the GPU actively working to serve your data.
+As of this writing, the VideoDB project is less than 72 hours old and remains 
+under active development. Expect rapid changes and frequent updates.
 
 See a demo here -> https://dgriebel2014.github.io/VideoDBProject/
 
