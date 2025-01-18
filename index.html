@@ -773,11 +773,11 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
             }
 
             // Customize these values for large tests
-            const storeCount = 1;          // e.g., create 10 or 50 stores
-            const recordsPerStore = 10000; // e.g., 10,000 rows per store
-            const bufferSizeMB = 50;       // GPU buffer size in MB (for each store's buffer)
-            const accuracySampleSize = 1000; // Number of rows to check for correctness (random sample)
-            const batchedGetPercent = 15;  // Percentage of rows to read in each store during batched GET
+            const storeCount = 1;            // e.g., create 10 or 50 stores
+            const recordsPerStore = 10000;   // e.g., 10,000 rows per store
+            const bufferSizeMB = 50;         // GPU buffer size in MB (for each store's buffer)
+            const accuracySampleSize = 5000; // Number of rows to check for correctness (random sample)
+            const batchedGetPercent = 15;    // Percentage of rows to read in each store during batched GET
 
             // We'll keep an in-memory map of all data so we can confirm accuracy (at least for sampled rows)
             const inMemoryData = [];
@@ -850,7 +850,6 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
                     const { storeName, key, expected } = inMemoryData[idx];
                     const actual = await videoDB.get(storeName, key);
 
-                    debugger;
                     if (!compareValues(expected, actual)) {
                         mismatches++;
                         if (mismatches < 10) {
@@ -867,27 +866,29 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
 
                 // GET PERFORMANCE MEASUREMENT
 
+                const testDurationSeconds = 5000;
+
                 // SEQUENTIAL GET
-                logToConsole("[STEP] Starting SEQUENTIAL GET performance test (3 seconds)...");
-                const seqRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/false);
+                logToConsole(`[STEP] Starting SEQUENTIAL GET performance test (${testDurationSeconds / 1000} seconds)...`);
+                const seqRate = await measureGetRate(inMemoryData, testDurationSeconds, /*randomAccess=*/false);
                 logToConsole(`[RESULTS] SEQUENTIAL GET: ~${seqRate.toLocaleString()} GETs/sec\n`);
 
                 // RANDOM GET
-                logToConsole("[STEP] Starting RANDOM GET performance test (3 seconds)...");
-                const randRate = await measureGetRate(inMemoryData, 3000, /*randomAccess=*/true);
+                logToConsole(`[STEP] Starting RANDOM GET performance test (${testDurationSeconds / 1000} seconds)...`);
+                const randRate = await measureGetRate(inMemoryData, testDurationSeconds, /*randomAccess=*/true);
                 logToConsole(`[RESULTS] RANDOM GET: ~${randRate.toLocaleString()} GETs/sec\n`);
 
                 // NON-CONTIGUOUS BATCHED GET (shuffled)
-                logToConsole("[STEP] Starting NON-CONTIGUOUS BATCHED GET performance test (3 seconds)...");
-                const batchRateNonContiguous = await measureNonContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
+                logToConsole(`[STEP] Starting NON-CONTIGUOUS BATCHED GET performance test (${testDurationSeconds / 1000} seconds)...`);
+                const batchRateNonContiguous = await measureNonContiguousBatchedGetRate(inMemoryData, testDurationSeconds, batchedGetPercent);
                 logToConsole(`[RESULTS] NON-CONTIGUOUS BATCHED GET: ~${batchRateNonContiguous.toLocaleString()} GETs/sec\n`);
 
                 // CONTIGUOUS BATCHED GET (in insertion order)
-                logToConsole("[STEP] Starting CONTIGUOUS BATCHED GET performance test (3 seconds)...");
-                const batchRateContiguous = await measureContiguousBatchedGetRate(inMemoryData, 3000, batchedGetPercent);
+                logToConsole(`[STEP] Starting CONTIGUOUS BATCHED GET performance test (${testDurationSeconds / 1000} seconds)...`);
+                const batchRateContiguous = await measureContiguousBatchedGetRate(inMemoryData, testDurationSeconds, batchedGetPercent);
                 logToConsole(`[RESULTS] CONTIGUOUS BATCHED GET: ~${batchRateContiguous.toLocaleString()} GETs/sec\n`);
 
-                logToConsole("[INFO] Accuracy Test / GET Benchmark Completed.");
+                logToConsole(`[INFO] Accuracy Test / GET Benchmark Completed.`);
             } catch (err) {
                 logToConsole(`[ERROR] ${err.message}`);
             }
@@ -1423,19 +1424,22 @@ videoDB.clear("reallyFakeStore");<br />
                     }
                 }
 
-                const addSeconds = 5;
+                const testDurationSeconds = 5;
 
-                const addRate = await runPerfPhase(name, "add", dataObj, addSeconds * 1000);
-                const addOps = Math.floor(addRate * addSeconds); // Approximate total adds
+                const addRate = await runPerfPhase(name, "add", dataObj, testDurationSeconds * 1000);
+                const addOps = Math.floor(addRate * testDurationSeconds); // Approximate total adds
                 totalAddOps += addOps;
+                await new Promise(resolve => setTimeout(resolve, 250));
 
-                const putRate = await runPerfPhase(name, "put", dataObj, addSeconds * 1000);
-                const putOps = Math.floor(putRate * addSeconds); // Approximate total puts
+                const putRate = await runPerfPhase(name, "put", dataObj, testDurationSeconds * 1000);
+                const putOps = Math.floor(putRate * testDurationSeconds); // Approximate total puts
                 totalPutOps += putOps;
+                await new Promise(resolve => setTimeout(resolve, 250));
 
-                const delRate = await runDeletePhase(name, addSeconds * 1000);
-                const delOps = Math.floor(delRate * addSeconds); // Approximate total deletes
+                const delRate = await runDeletePhase(name, testDurationSeconds * 1000);
+                const delOps = Math.floor(delRate * testDurationSeconds); // Approximate total deletes
                 totalDelOps += delOps;
+                await new Promise(resolve => setTimeout(resolve, 250));
 
                 perfResults.push({ store: name, addRate, putRate, delRate });
 
