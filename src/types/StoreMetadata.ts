@@ -1,14 +1,18 @@
 // types/StoreMetadata.ts
 export interface StoreMetadata {
-    storeName: string; // Add this line
+    storeName: string;
     dataType: "TypedArray" | "ArrayBuffer" | "JSON";
-    typedArrayType?: "Float32Array" | "Float64Array" | "Int32Array" | "Uint32Array" | "Uint8Array";
+    typedArrayType?:
+    | "Float32Array"
+    | "Float64Array"
+    | "Int32Array"
+    | "Uint32Array"
+    | "Uint8Array";
     bufferSize: number;
     rowSize?: number;
     rowsPerBuffer?: number;
     totalRows: number;
 
-    // Updated fields for the CPU-based row approach:
     buffers: BufferMetadata[];
     rows: RowMetadata[];
 
@@ -16,6 +20,9 @@ export interface StoreMetadata {
     metadataBuffer?: GPUBuffer;
     dirtyMetadata: boolean;
     metadataVersion: number;
+
+    // Top-level sort definitions
+    sortDefinition?: SortDefinition[];
 }
 
 export interface BufferMetadata {
@@ -58,4 +65,14 @@ export type RowInfo = {
     rowIndex: number;
     offsetInFinalBuffer: number;
     length: number;
-};
+}
+
+export interface SortDefinition {
+    name: string;
+    sortFields: SortField[];
+}
+export interface SortField {
+    sortColumn: string;
+    path: string;
+    sortDirection: "Asc" | "Desc";
+}
