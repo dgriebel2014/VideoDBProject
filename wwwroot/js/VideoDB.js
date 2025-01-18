@@ -47,11 +47,11 @@ export class VideoDB {
     device;
     storeMetadataMap;
     storeKeyMap;
-    // The new properties that enable caching/batching:
     pendingWrites = [];
-    BATCH_SIZE = 10000; // e.g. auto-flush after 10000 writes
+    BATCH_SIZE = 10000;
     flushTimer = null;
     isReady = true;
+    jsonWorker;
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -60,6 +60,27 @@ export class VideoDB {
         this.device = device;
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
+        this.jsonWorker = new Worker('./offsetsWorker.js');
+    }
+    // Then you add a method that uses the worker
+    getJsonFieldOffsets(dataArray, sortDefinition) {
+        return new Promise((resolve, reject) => {
+            const onMessage = (ev) => {
+                if (!ev.data)
+                    return;
+                if (ev.data.cmd === 'getJsonFieldOffsets_result') {
+                    this.jsonWorker.removeEventListener('message', onMessage);
+                    resolve(ev.data.result);
+                }
+            };
+            this.jsonWorker.addEventListener('message', onMessage);
+            // Post the request to the worker
+            this.jsonWorker.postMessage({
+                cmd: 'getJsonFieldOffsets',
+                data: dataArray,
+                sortDefinition,
+            });
+        });
     }
     /**
      * Creates a new object store with the specified configuration options.
@@ -342,7 +363,7 @@ export class VideoDB {
         // REMOVED: MAP_WRITE
         const newGpuBuffer = this.device.createBuffer({
             size: storeMeta.bufferSize,
-            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, // CHANGED
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
             mappedAtCreation: false
         });
         // Add the newly created buffer to the store's metadata

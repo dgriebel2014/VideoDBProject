@@ -8,7 +8,9 @@ import {
     InitialMetrics,
     MapBufferSubsections,
     PerKeyMetrics,
-    RowInfo
+    RowInfo,
+    SortDefinition,
+    SortField
 } from "./types/StoreMetadata";
 
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
@@ -75,11 +77,11 @@ interface PendingWrite {
 export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
     public storeKeyMap: Map<string, Map<string, number>>;
-    // The new properties that enable caching/batching:
     public pendingWrites: PendingWrite[] = [];
-    private readonly BATCH_SIZE = 10000; // e.g. auto-flush after 10000 writes
+    private readonly BATCH_SIZE = 10000;
     private flushTimer: number | null = null;
     public isReady: boolean | null = true;
+    private jsonWorker: Worker;
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -88,6 +90,65 @@ export class VideoDB {
     constructor(private device: GPUDevice) {
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
+        this.jsonWorker = new Worker('./offsetsWorker.js');
+    }
+
+    /**
+     * Asynchronously computes the JSON field offsets for each object in the given array, 
+     * according to the specified sort definition. The serialization and offset calculation 
+     * occur inside a dedicated Web Worker to avoid blocking the main thread.
+     *
+     * @param {any[]} dataArray 
+     *   An array of objects to be processed. Each object is serialized to JSON, and 
+     *   certain field offsets are tracked.
+     *
+     * @param {SortDefinition} sortDefinition 
+     *   A definition that specifies which fields (by path) should be located in the 
+     *   serialized JSON strings and in what order.
+     *
+     * @returns {Promise<Array<[string, Uint32Array, string[]]>>}
+     *   A promise that resolves to an array. Each element represents one object and 
+     *   consists of:
+     *   - The full JSON string.
+     *   - A `Uint32Array` capturing the byte offsets (start, end) for each tracked field.
+     *   - An array of substrings extracted from those offsets.
+     *
+     * @example
+     * const data = [{ id: 1, user: { name: "Alice" } }, { id: 2, user: { name: "Bob" } }];
+     * const sortDef = {
+     *   name: "exampleSort",
+     *   sortFields: [
+     *     { path: "id", sortColumn: "id", sortDirection: "Asc" },
+     *     { path: "user.name", sortColumn: "name", sortDirection: "Asc" }
+     *   ]
+     * };
+     *
+     * getJsonFieldOffsets(data, sortDef).then(results => {
+     *   console.log("Offsets:", results);
+     * });
+     */
+    public getJsonFieldOffsets(
+        dataArray: any[],
+        sortDefinition: SortDefinition
+    ): Promise<Array<[string, Uint32Array, string[]]>> {
+        return new Promise((resolve, reject) => {
+            const onMessage = (ev: MessageEvent) => {
+                if (!ev.data) return;
+                if (ev.data.cmd === 'getJsonFieldOffsets_result') {
+                    this.jsonWorker.removeEventListener('message', onMessage);
+                    resolve(ev.data.result);
+                }
+            };
+
+            this.jsonWorker.addEventListener('message', onMessage);
+
+            // Post the request to the worker
+            this.jsonWorker.postMessage({
+                cmd: 'getJsonFieldOffsets',
+                data: dataArray,
+                sortDefinition,
+            });
+        });
     }
 
     /**
