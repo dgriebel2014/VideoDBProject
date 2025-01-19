@@ -1308,14 +1308,19 @@ for await (const record of videoDB.openCursor("fakeCursorStore")) {<br />
 videoDB.clear("reallyFakeStore");<br />
 </code><br />
         `);
-            try {
-                videoDB.clear("reallyFakeStore");
-            } catch (err) {
-                logToConsole("[ERROR] " + err.message);
-            }
-            logToConsole("");
 
-            logToConsole("[INFO] Finished testing error scenarios.");
+            videoDB.clear("reallyFakeStore")
+                .then(() => {
+                    // success
+                })
+                .catch(err => {
+                    logToConsole("[ERROR] " + err.message);
+                });
+
+            window.setTimeout(function () {
+                logToConsole("");
+                logToConsole("[INFO] Finished testing error scenarios.");
+            }, 300);
         }
 
         /**

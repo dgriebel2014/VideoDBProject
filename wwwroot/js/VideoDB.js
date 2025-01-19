@@ -1,44 +1,3 @@
-// Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
-// Distributed under the MIT license.
-// For convenience, define a simple flag for inactive rows, e.g. 0x1.
-const ROW_INACTIVE_FLAG = 0x1;
-/**
- * Rounds `value` up to the nearest multiple of `align`.
- */
-function roundUp(value, align) {
-    return Math.ceil(value / align) * align;
-}
-/**
- * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
- * @param jsonString - The original JSON string to pad.
- * @returns The padded JSON string with a UTF-8 length multiple of 4.
- */
-function padJsonTo4Bytes(jsonString) {
-    const encoder = new TextEncoder();
-    const initialBytes = encoder.encode(jsonString).length;
-    const remainder = initialBytes % 4;
-    if (remainder === 0) {
-        return jsonString;
-    }
-    const needed = 4 - remainder;
-    return jsonString + " ".repeat(needed);
-}
-/**
- * Pads the given ArrayBuffer to make its byteLength a multiple of 4.
- * If already aligned, returns the original buffer.
- */
-function padTo4Bytes(ab) {
-    const remainder = ab.byteLength % 4;
-    if (remainder === 0) {
-        // Already aligned
-        return ab;
-    }
-    const needed = 4 - remainder;
-    const padded = new Uint8Array(ab.byteLength + needed);
-    padded.set(new Uint8Array(ab), 0); // copy the original bytes
-    // Extra bytes remain zero
-    return padded.buffer;
-}
 /**
  * A VideoDB class that stores all metadata in CPU memory,
  * and actual data on the GPU
@@ -52,6 +11,8 @@ export class VideoDB {
     flushTimer = null;
     isReady = true;
     jsonWorker;
+    waitUntilReadyPromise = null;
+    readyResolver = null;
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -61,26 +22,6 @@ export class VideoDB {
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
         this.jsonWorker = new Worker('./offsetsWorker.js');
-    }
-    // Then you add a method that uses the worker
-    getJsonFieldOffsets(dataArray, sortDefinition) {
-        return new Promise((resolve, reject) => {
-            const onMessage = (ev) => {
-                if (!ev.data)
-                    return;
-                if (ev.data.cmd === 'getJsonFieldOffsets_result') {
-                    this.jsonWorker.removeEventListener('message', onMessage);
-                    resolve(ev.data.result);
-                }
-            };
-            this.jsonWorker.addEventListener('message', onMessage);
-            // Post the request to the worker
-            this.jsonWorker.postMessage({
-                cmd: 'getJsonFieldOffsets',
-                data: dataArray,
-                sortDefinition,
-            });
-        });
     }
     /**
      * Creates a new object store with the specified configuration options.
@@ -268,40 +209,6 @@ export class VideoDB {
         }
     }
     /**
-     * Reads rows from the store based on skip and take parameters.
-     *
-     * @param storeName - The target store name.
-     * @param storeMeta - Metadata of the store.
-     * @param skip - Number of records to skip.
-     * @param take - Number of records to take.
-     * @returns An object containing the results and per-key metrics.
-     */
-    async readRowsWithPagination(storeName, allKeys, skip, take) {
-        // Slice the keys array to get the paginated keys
-        const paginatedKeys = allKeys.slice(skip, skip + take);
-        // Use getMultipleByKeys to fetch the data
-        const { results, perKeyMetrics } = await this.getMultipleByKeys(storeName, paginatedKeys);
-        return { results, perKeyMetrics };
-    }
-    /**
-     * Helper method to handle fetching multiple records by keys.
-     *
-     * @param storeName - The target store name.
-     * @param keys - The array of keys (or wildcard patterns) to read.
-     * @returns An object containing the deserialized data array and per-key metrics.
-     */
-    async getMultipleByKeys(storeName, keys) {
-        // Flush & retrieve store metadata
-        const { storeMeta, keyMap, metrics } = await this.flushAndGetMetadata(storeName);
-        // Expand any wildcard patterns
-        const expandedKeys = this.expandAllWildcards(keys, keyMap);
-        // Read all rows based on expanded keys
-        const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
-        // Log or accumulate performance
-        this.logPerformance(metrics, perKeyMetrics);
-        return { results, perKeyMetrics };
-    }
-    /**
      * Deletes data for a specific key from the GPU-backed store by batching the delete operation.
      * The actual GPU write and metadata update are deferred until `flushWrites` is called.
      *
@@ -345,10 +252,11 @@ export class VideoDB {
      * @returns {void}
      * @throws {Error} If the specified store does not exist.
      */
-    clear(storeName) {
+    async clear(storeName) {
+        await this.waitUntilReady();
         // Retrieve store metadata and keyMap
-        const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
+        const storeMeta = this.getStoreMetadata(storeName);
         // Discard all row metadata
         storeMeta.rows = [];
         // Destroy all existing GPU buffers
@@ -359,8 +267,6 @@ export class VideoDB {
         }
         // Clear the array of buffers
         storeMeta.buffers = [];
-        // CHANGED: Recreate a single new GPU buffer with only COPY_SRC | COPY_DST
-        // REMOVED: MAP_WRITE
         const newGpuBuffer = this.device.createBuffer({
             size: storeMeta.bufferSize,
             usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -407,7 +313,6 @@ export class VideoDB {
      */
     async *openCursor(storeName, options) {
         // Retrieve store metadata and keyMap
-        const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
         // Retrieve all active keys
         let activeKeys = Array.from(keyMap.keys());
@@ -457,10 +362,6 @@ export class VideoDB {
     /**
      * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched manner.
      *
-     * CHANGED: Instead of mapping the target GPU buffer (which used MAP_WRITE),
-     * we now use the WebGPU `queue.writeBuffer(...)` to copy CPU data directly into the GPU buffer.
-     * This removes all direct `mapAsync` calls on our store buffers.
-     *
      * @returns {Promise<void>} A promise that resolves once all pending writes have been applied.
      */
     async flushWrites() {
@@ -485,7 +386,6 @@ export class VideoDB {
             for (const pendingWrite of writeGroup) {
                 try {
                     const { rowMetadata, arrayBuffer } = pendingWrite;
-                    // CHANGED: Use queue.writeBuffer, not mapAsync
                     this.device.queue.writeBuffer(gpuBuffer, rowMetadata.offset, arrayBuffer);
                     successfulWrites.add(pendingWrite);
                 }
@@ -537,16 +437,16 @@ export class VideoDB {
         });
     }
     /**
-     * Retrieves the keyMap for a specific store, throwing an error if not found.
+     * Retrieves the keyMap for a specific store. If no keyMap is found,
+     * an empty Map is returned and a warning is logged.
      *
      * @param {string} storeName - The name of the object store whose keyMap should be retrieved.
      * @returns {Map<string, number>} The key-to-rowId mapping for the specified store.
-     * @throws {Error} If no keyMap is found for the given storeName.
      */
     getKeyMap(storeName) {
         const keyMap = this.storeKeyMap.get(storeName);
         if (!keyMap) {
-            throw new Error(`Key map for store "${storeName}" is missing or uninitialized.`);
+            throw new Error(`Keymap for store "${storeName}" does not exist.`);
         }
         return keyMap;
     }
@@ -601,13 +501,23 @@ export class VideoDB {
     /**
      * Retrieves the metadata object for a specified store.
      * @param {string} storeName - The name of the store.
-     * @returns {StoreMetadata} The metadata object for the specified store.
-     * @throws {Error} If the specified store does not exist.
+     * @returns {StoreMetadata} The metadata object for the specified store, or a default if not found.
      */
     getStoreMetadata(storeName) {
         const meta = this.storeMetadataMap.get(storeName);
         if (!meta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
+            //    // Return a default/fallback metadata object as needed by your application
+            //    return {
+            //        rows: [],
+            //        buffers: [],
+            //        bufferSize: 0,
+            //        storeName: '',
+            //        dataType: 'JSON',
+            //        totalRows: 0,
+            //        dirtyMetadata: false,
+            //        metadataVersion: 1
+            //    };
         }
         return meta;
     }
@@ -864,6 +774,11 @@ export class VideoDB {
                 console.error('Error during timed flushWrites:', error);
             });
             this.flushTimer = null;
+            if (this.readyResolver) {
+                this.readyResolver();
+                this.readyResolver = null;
+                this.waitUntilReadyPromise = null;
+            }
             this.isReady = true;
         }, 250);
     }
@@ -1080,5 +995,147 @@ export class VideoDB {
             },
         };
     }
+    /**
+     * Asynchronously computes the JSON field offsets for each object in the given array,
+     * according to the specified sort definition. The serialization and offset calculation
+     * occur inside a dedicated Web Worker to avoid blocking the main thread.
+     *
+     * @param {any[]} dataArray
+     *   An array of objects to be processed. Each object is serialized to JSON, and
+     *   certain field offsets are tracked.
+     *
+     * @param {SortDefinition} sortDefinition
+     *   A definition that specifies which fields (by path) should be located in the
+     *   serialized JSON strings and in what order.
+     *
+     * @returns {Promise<Array<[string, Uint32Array, string[]]>>}
+     *   A promise that resolves to an array. Each element represents one object and
+     *   consists of:
+     *   - The full JSON string.
+     *   - A `Uint32Array` capturing the byte offsets (start, end) for each tracked field.
+     *   - An array of substrings extracted from those offsets.
+     *
+     * @example
+     * const data = [{ id: 1, user: { name: "Alice" } }, { id: 2, user: { name: "Bob" } }];
+     * const sortDef = {
+     *   name: "exampleSort",
+     *   sortFields: [
+     *     { path: "id", sortColumn: "id", sortDirection: "Asc" },
+     *     { path: "user.name", sortColumn: "name", sortDirection: "Asc" }
+     *   ]
+     * };
+     *
+     * getJsonFieldOffsets(data, sortDef).then(results => {
+     *   console.log("Offsets:", results);
+     * });
+     */
+    getJsonFieldOffsets(dataArray, sortDefinition) {
+        return new Promise((resolve, reject) => {
+            const onMessage = (ev) => {
+                if (!ev.data)
+                    return;
+                if (ev.data.cmd === 'getJsonFieldOffsets_result') {
+                    this.jsonWorker.removeEventListener('message', onMessage);
+                    resolve(ev.data.result);
+                }
+            };
+            this.jsonWorker.addEventListener('message', onMessage);
+            // Post the request to the worker
+            this.jsonWorker.postMessage({
+                cmd: 'getJsonFieldOffsets',
+                data: dataArray,
+                sortDefinition,
+            });
+        });
+    }
+    /**
+     * Ensures that we do not proceed until `this.isReady` is `true`.
+     */
+    waitUntilReady() {
+        // If already ready, just return immediately
+        if (this.isReady)
+            return Promise.resolve();
+        // If a wait promise is *already* in progress, return the same one
+        if (this.waitUntilReadyPromise)
+            return this.waitUntilReadyPromise;
+        // Otherwise, create a fresh promise and store its resolver
+        this.waitUntilReadyPromise = new Promise((resolve) => {
+            this.readyResolver = resolve;
+        });
+        return this.waitUntilReadyPromise;
+    }
+    /**
+     * Reads rows from the store based on skip and take parameters.
+     *
+     * @param storeName - The target store name.
+     * @param storeMeta - Metadata of the store.
+     * @param skip - Number of records to skip.
+     * @param take - Number of records to take.
+     * @returns An object containing the results and per-key metrics.
+     */
+    async readRowsWithPagination(storeName, allKeys, skip, take) {
+        // Slice the keys array to get the paginated keys
+        const paginatedKeys = allKeys.slice(skip, skip + take);
+        // Use getMultipleByKeys to fetch the data
+        const { results, perKeyMetrics } = await this.getMultipleByKeys(storeName, paginatedKeys);
+        return { results, perKeyMetrics };
+    }
+    /**
+     * Helper method to handle fetching multiple records by keys.
+     *
+     * @param storeName - The target store name.
+     * @param keys - The array of keys (or wildcard patterns) to read.
+     * @returns An object containing the deserialized data array and per-key metrics.
+     */
+    async getMultipleByKeys(storeName, keys) {
+        // Flush & retrieve store metadata
+        const { storeMeta, keyMap, metrics } = await this.flushAndGetMetadata(storeName);
+        // Expand any wildcard patterns
+        const expandedKeys = this.expandAllWildcards(keys, keyMap);
+        // Read all rows based on expanded keys
+        const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
+        // Log or accumulate performance
+        this.logPerformance(metrics, perKeyMetrics);
+        return { results, perKeyMetrics };
+    }
+}
+// For convenience, define a simple flag for inactive rows, e.g. 0x1.
+const ROW_INACTIVE_FLAG = 0x1;
+/**
+ * Rounds `value` up to the nearest multiple of `align`.
+ */
+function roundUp(value, align) {
+    return Math.ceil(value / align) * align;
+}
+/**
+ * Ensures the length of the provided JSON string is a multiple of 4 by adding trailing spaces.
+ * @param jsonString - The original JSON string to pad.
+ * @returns The padded JSON string with a UTF-8 length multiple of 4.
+ */
+function padJsonTo4Bytes(jsonString) {
+    const encoder = new TextEncoder();
+    const initialBytes = encoder.encode(jsonString).length;
+    const remainder = initialBytes % 4;
+    if (remainder === 0) {
+        return jsonString;
+    }
+    const needed = 4 - remainder;
+    return jsonString + " ".repeat(needed);
+}
+/**
+ * Pads the given ArrayBuffer to make its byteLength a multiple of 4.
+ * If already aligned, returns the original buffer.
+ */
+function padTo4Bytes(ab) {
+    const remainder = ab.byteLength % 4;
+    if (remainder === 0) {
+        // Already aligned
+        return ab;
+    }
+    const needed = 4 - remainder;
+    const padded = new Uint8Array(ab.byteLength + needed);
+    padded.set(new Uint8Array(ab), 0); // copy the original bytes
+    // Extra bytes remain zero
+    return padded.buffer;
 }
 //# sourceMappingURL=VideoDB.js.map
