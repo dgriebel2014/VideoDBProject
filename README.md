@@ -1,5 +1,14 @@
 ﻿# VideoDB README
 
+**January 19, 2025 Update**
+To use the `VideoDB` library, ensure that you have WebGPU type definitions installed in your project.
+
+npm install --save-dev @webgpu/types
+
+Ensure your tsconfig.json includes the WebGPU types.
+
+Also make sure your WebGPU flags are all enabled in edge://flags or chrome://flags
+
 **January 17, 2025 Update**
 
 I’ve overhauled the GPU buffer usage flags so that VideoDB now allocates its memory directly in main VRAM, rather than relying on shared system memory. Previously, buffers were placed in repurposed system RAM. With this change, the GPU holds VideoDB data fully on its own hardware, helping preserve bandwidth and reduce latency for large or frequently accessed datasets.

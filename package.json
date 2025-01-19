@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "tabulator-tables": "^6.3.0"
+  },
+  "peerDependencies": {
+    "@webgpu/types": "^0.1.53"
   }
 }
