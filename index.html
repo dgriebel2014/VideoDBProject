@@ -644,18 +644,6 @@ await videoDB.delete("${storeName}", "${key}");<br /><br />
 </code>`
             );
 
-            // [STEP] Clear the entire store
-            logToConsole(`[STEP] Clearing all data in the store...`);
-            await videoDB.clear(storeName);
-            logToConsole(`[SUCCESS] The store '${storeName}' has been cleared.`);
-
-            logCommandToConsole(
-                `<code>
-<b style='color:green;'>// [STEP] Clear the store</b><br />
-videoDB.clear("${storeName}");<br /><br />
-</code>`
-            );
-
             // [STEP] Finally, delete the store
             logToConsole(`[STEP] Deleting store '${storeName}'...`);
             videoDB.deleteObjectStore(storeName);
