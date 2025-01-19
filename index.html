@@ -493,6 +493,7 @@
          * @returns {Promise<void>}
          */
         async function checkGPU() {
+            clearConsole();
             logToConsole("[TASK] Checking GPU availability...");
 
             // Attempt to create or confirm the GPU device
@@ -1152,6 +1153,7 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
          * Each step is designed to fail and display an [ERROR] in the console.
          */
         async function testErrors() {
+            clearConsole();
             logToConsole("[TASK] Testing error scenarios...");
             logToConsole("");
 
