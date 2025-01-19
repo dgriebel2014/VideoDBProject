@@ -117,7 +117,6 @@ export class VideoDB {
      */
     public deleteObjectStore(storeName: string): void {
         if (!this.storeMetadataMap.has(storeName)) {
-            console.warn(`Object store "${storeName}" does not exist.`);
             return;
         }
         this.storeMetadataMap.delete(storeName);
@@ -339,11 +338,15 @@ export class VideoDB {
      * @throws {Error} If the specified store does not exist.
      */
     public async clear(storeName: string): Promise<void> {
+        const storeMeta = this.storeMetadataMap.get(storeName);
+        if (!storeMeta) {
+            throw new Error(`Object store "${storeName}" does not exist.`);
+        }
+
         await this.waitUntilReady();
 
         // Retrieve store metadata and keyMap
         const keyMap = this.getKeyMap(storeName);
-        const storeMeta = this.getStoreMetadata(storeName);
 
         // Discard all row metadata
         storeMeta.rows = [];
@@ -418,6 +421,11 @@ export class VideoDB {
             direction?: 'next' | 'prev';
         }
     ): AsyncGenerator<{ key: string; value: any }, void, unknown> {
+        const storeMeta = this.storeMetadataMap.get(storeName);
+        if (!storeMeta) {
+            throw new Error(`Object store "${storeName}" does not exist.`);
+        }
+
         // Retrieve store metadata and keyMap
         const keyMap = this.getKeyMap(storeName);
 
@@ -579,7 +587,7 @@ export class VideoDB {
     private getKeyMap(storeName: string): Map<string, number> {
         const keyMap = this.storeKeyMap.get(storeName);
         if (!keyMap) {
-            throw new Error(`Keymap for store "${storeName}" does not exist.`);
+            return new Map<string, number>();
         }
         return keyMap;
     }
@@ -646,17 +654,6 @@ export class VideoDB {
         const meta = this.storeMetadataMap.get(storeName);
         if (!meta) {
             throw new Error(`Object store "${storeName}" does not exist.`);
-            //    // Return a default/fallback metadata object as needed by your application
-            //    return {
-            //        rows: [],
-            //        buffers: [],
-            //        bufferSize: 0,
-            //        storeName: '',
-            //        dataType: 'JSON',
-            //        totalRows: 0,
-            //        dirtyMetadata: false,
-            //        metadataVersion: 1
-            //    };
         }
         return meta;
     }
