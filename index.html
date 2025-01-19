@@ -380,10 +380,15 @@
         */
         async function initDemoPage() {
             clearConsole();
+
             // Attach event listeners for each link with a data-task attribute
             const taskLinks = document.querySelectorAll('.task-list a[data-task]');
             taskLinks.forEach(link => {
                 link.addEventListener('click', async (event) => {
+                    const outerContainer = document.getElementById('outerContainer');
+                    if (outerContainer) {
+                        outerContainer.style.display = "none";
+                    }
 
                     event.preventDefault();
                     const task = link.getAttribute('data-task');
@@ -490,13 +495,13 @@
         async function checkGPU() {
             logToConsole("[TASK] Checking GPU availability...");
 
-            // STEP 1: Attempt to create or confirm the GPU device
+            // Attempt to create or confirm the GPU device
             logToConsole("[STEP] Attempting to request the GPU device...");
             if (!device) {
                 await setupDevice();
             }
 
-            // STEP 2: Success or fail message
+            // Success or fail message
             if (device) {
                 logToConsole("[SUCCESS] GPU device is available. WebGPU is supported.");
                 logToConsole("If you had issues, ensure your Chrome/Edge flags are set to enable WebGPU.");
@@ -2140,6 +2145,12 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
 
             try {
                 if (!videoDB.listObjectStores().includes(storeName)) {
+                    document.querySelectorAll('.submenu-button').forEach(button => {
+                        button.classList.add('disabled');
+                        button.style.pointerEvents = 'none';
+                        button.style.opacity = '0.5';
+                    });
+
                     logToConsole(`[TASK] Fetching dataset for "${label}" from "${url}"...`);
 
                     // Fetch & parse data
@@ -2153,10 +2164,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     }
                     const formattedSize = formatSize(totalBytes);
 
-                    // Create or re-create our store for these rows
-                    if (videoDB.listObjectStores().includes(storeName)) {
-                        videoDB.deleteObjectStore(storeName);
-                    }
                     videoDB.createObjectStore(storeName, {
                         dataType: "JSON",
                         bufferSize: 10 * 1024 * 1024,
@@ -2170,16 +2177,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
                     }
 
-                    // Wait until VideoDB is marked ready
-                    await new Promise(resolve => {
-                        const checkInterval = setInterval(() => {
-                            if (videoDB.isReady) {
-                                clearInterval(checkInterval);
-                                resolve();
-                            }
-                        }, 300);
-                    });
-
                     logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}".`);
                 } else {
                     logToConsole(`[SUCCESS] Viewing records in "${storeName}".`);
@@ -2187,6 +2184,14 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
 
                 // Now call setupJsGrid()
                 await setupGrid(storeName);
+
+                document.querySelectorAll('.submenu-button').forEach(button => {
+                    button.classList.remove('disabled');
+                    button.style.pointerEvents = 'auto';
+                    button.style.opacity = '1';
+                });
+
+                document.getElementById('outerContainer').style.display = 'block';
 
                 logToConsole(``);
             } catch (error) {
