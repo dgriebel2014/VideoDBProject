@@ -1,4 +1,5 @@
-﻿/**
+﻿// videoDB.ts
+/**
  * A VideoDB class that stores all metadata in CPU memory, 
  * and actual data on the GPU
  */
@@ -20,7 +21,7 @@ export class VideoDB {
     constructor(private device: GPUDevice) {
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
-        this.jsonWorker = new Worker('./offsetsWorker.js');
+        this.jsonWorker = new Worker('./js/offsetsWorker.js');
     }
 
     /**
@@ -487,6 +488,26 @@ export class VideoDB {
     private async flushWrites(): Promise<void> {
         if (this.pendingWrites.length === 0) {
             return;
+        }
+
+        // Identify pending writes involving JSON data with a non-empty sortDefinition.
+        const jsonWrites: PendingWrite[] = this.pendingWrites.filter(
+            pw => pw.storeMeta.dataType === "JSON" &&
+                pw.storeMeta.sortDefinition &&
+                pw.storeMeta.sortDefinition.length > 0 &&
+                (pw.operationType === 'add' || pw.operationType === 'put')
+        );
+
+        // If any JSON writes exist, send them all in one batch to the offsets worker.
+        if (jsonWrites.length > 0) {
+            const storeMeta = jsonWrites[0].storeMeta;
+            const definitions = storeMeta.sortDefinition;
+            const arrayBuffers = jsonWrites.map(item => item.arrayBuffer);
+
+            if (definitions && definitions.length > 0 && arrayBuffers.length > 0) {
+                const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
+                console.log('offsetsResult', offsetsResult);
+            }
         }
 
         // Group by GPU buffer
@@ -1328,59 +1349,47 @@ export class VideoDB {
     }
 
     /**
-     * Asynchronously computes the JSON field offsets for each object in the given array, 
-     * according to the specified sort definition. The serialization and offset calculation 
+     * Asynchronously computes the JSON field offsets for each object in the given array,
+     * using one or more sort definitions. The serialization and offset calculation
      * occur inside a dedicated Web Worker to avoid blocking the main thread.
      *
-     * @param {any[]} dataArray 
-     *   An array of objects to be processed. Each object is serialized to JSON, and 
-     *   certain field offsets are tracked.
+     * @param dataArray
+     *   An array of objects to be processed. Each object is serialized to JSON,
+     *   and certain field offsets are tracked.
      *
-     * @param {SortDefinition} sortDefinition 
-     *   A definition that specifies which fields (by path) should be located in the 
-     *   serialized JSON strings and in what order.
+     * @param sortDefinitions
+     *   Either a single SortDefinition object or an array of multiple SortDefinitions,
+     *   each specifying which fields (by path) to locate in the serialized JSON.
      *
-     * @returns {Promise<Array<[string, Uint32Array, string[]]>>}
-     *   A promise that resolves to an array. Each element represents one object and 
-     *   consists of:
-     *   - The full JSON string.
-     *   - A `Uint32Array` capturing the byte offsets (start, end) for each tracked field.
-     *   - An array of substrings extracted from those offsets.
+     * @returns
+     *   - If you pass a single SortDefinition:
+     *       Promise<Array<[string, Uint32Array, string[]]>>
+     *     (same as before)
      *
-     * @example
-     * const data = [{ id: 1, user: { name: "Alice" } }, { id: 2, user: { name: "Bob" } }];
-     * const sortDef = {
-     *   name: "exampleSort",
-     *   sortFields: [
-     *     { path: "id", sortColumn: "id", sortDirection: "Asc" },
-     *     { path: "user.name", sortColumn: "name", sortDirection: "Asc" }
-     *   ]
-     * };
-     *
-     * getJsonFieldOffsets(data, sortDef).then(results => {
-     *   console.log("Offsets:", results);
-     * });
+     *   - If you pass an array of SortDefinition:
+     *       Promise<Array<Array<[string, Uint32Array, string[]]>>>
+     *     i.e., an array whose elements each correspond to one definition’s result array.
      */
     public getJsonFieldOffsets(
         dataArray: any[],
-        sortDefinition: SortDefinition
-    ): Promise<Array<[string, Uint32Array, string[]]>> {
+        sortDefinitions: SortDefinition | SortDefinition[]
+    ): Promise<any> {
         return new Promise((resolve, reject) => {
             const onMessage = (ev: MessageEvent) => {
                 if (!ev.data) return;
-                if (ev.data.cmd === 'getJsonFieldOffsets_result') {
-                    this.jsonWorker.removeEventListener('message', onMessage);
+                if (ev.data.cmd === "getJsonFieldOffsets_result") {
+                    this.jsonWorker.removeEventListener("message", onMessage);
                     resolve(ev.data.result);
                 }
             };
 
-            this.jsonWorker.addEventListener('message', onMessage);
+            this.jsonWorker.addEventListener("message", onMessage);
 
             // Post the request to the worker
             this.jsonWorker.postMessage({
-                cmd: 'getJsonFieldOffsets',
-                data: dataArray,
-                sortDefinition,
+                cmd: "getJsonFieldOffsets",
+                arrayBuffers: dataArray,
+                sortDefinition: sortDefinitions
             });
         });
     }

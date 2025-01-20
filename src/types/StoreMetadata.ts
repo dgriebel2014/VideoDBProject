@@ -69,7 +69,11 @@ export type RowInfo = {
 
 export interface SortDefinition {
     name: string;
-    sortFields: SortField[];
+    sortFields: {
+        sortColumn: string;
+        path: string;
+        sortDirection: "Asc" | "Desc";
+    }[];
 }
 export interface SortField {
     sortColumn: string;

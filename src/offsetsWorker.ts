@@ -1,4 +1,4 @@
-// offsetsWorker.ts
+﻿// offsetsWorker.ts
 
 // Define all the helper functions
 function buildPathIndexMap(sortDefinition: any) {
@@ -7,6 +7,32 @@ function buildPathIndexMap(sortDefinition: any) {
         map[field.path] = i;
     });
     return map;
+}
+
+function computeOffsetsForSingleDefinition(dataArray: any[], sortDefinition: any) {
+    const startTime = performance.now ? performance.now() : Date.now();
+
+    const results = dataArray.map((obj) => {
+        const { jsonString, offsets } = serializeObjectWithOffsets(obj, sortDefinition);
+        // Build array of substrings for each tracked field
+        const substrings: string[] = [];
+        for (let i = 0; i < offsets.length; i += 2) {
+            const start = offsets[i];
+            const end = offsets[i + 1];
+            substrings.push(jsonString.substring(start, end));
+        }
+        return [offsets];
+    });
+
+    const endTime = performance.now ? performance.now() : Date.now();
+    const elapsedTime = endTime - startTime;
+
+    console.log("\n=== Webworker Performance Metrics ===");
+    console.log(`Number of objects processed: ${dataArray.length}`);
+    console.log(`Sort Definition: `, sortDefinition);
+    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
+
+    return results;
 }
 
 function serializeValueWithOffsets(
@@ -50,6 +76,7 @@ function serializeValueWithOffsets(
 
     if (valueType === "string") {
         const chunk = JSON.stringify(value);
+
         if (currentPath in pathIndexMap) {
             const idx = pathIndexMap[currentPath] * 2;
             if (chunk.length >= 2 && chunk.startsWith('"') && chunk.endsWith('"')) {
@@ -123,42 +150,33 @@ function serializeObjectWithOffsets(obj: any, sortDefinition: any) {
     };
 }
 
-function getJsonFieldOffsets(dataArray: any[], sortDefinition: any) {
-    const startTime = performance.now ? performance.now() : Date.now();
-
-    const results = dataArray.map((obj) => {
-        const { jsonString, offsets } = serializeObjectWithOffsets(obj, sortDefinition);
-
-        // Build array of substrings for each tracked field
-        const substrings: string[] = [];
-        for (let i = 0; i < offsets.length; i += 2) {
-            const start = offsets[i];
-            const end = offsets[i + 1];
-            substrings.push(jsonString.substring(start, end));
-        }
-        return [jsonString, offsets, substrings];
-    });
-
-    const endTime = performance.now ? performance.now() : Date.now();
-    const elapsedTime = endTime - startTime;
-
-    console.log("\n=== Performance Metrics ===");
-    console.log(`Number of objects processed: ${dataArray.length}`);
-    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
-
-    return results;
+// Modified to handle single or multiple definitions
+function getJsonFieldOffsets(dataArray: any[], sortDefinitionOrDefinitions: any) {
+    if (Array.isArray(sortDefinitionOrDefinitions)) {
+        // MULTIPLE definitions → return an array of results
+        return sortDefinitionOrDefinitions.map(def => {
+            return computeOffsetsForSingleDefinition(dataArray, def);
+        });
+    } else {
+        // SINGLE definition → return a single result array
+        return computeOffsetsForSingleDefinition(dataArray, sortDefinitionOrDefinitions);
+    }
 }
 
 // Worker "onmessage" listener
 self.onmessage = (e: MessageEvent) => {
     if (!e.data) return;
+
     if (e.data.cmd === "getJsonFieldOffsets") {
-        const { data, sortDefinition } = e.data;
-        const result = getJsonFieldOffsets(data, sortDefinition);
-        // Send the response back to the main thread
-        (self as unknown as Worker).postMessage({
-            cmd: "getJsonFieldOffsets_result",
-            result,
-        });
+        const { arrayBuffers, sortDefinition } = e.data;
+
+        // Parse each ArrayBuffer into an object here in the worker
+        const dataArray = arrayBuffers.map((ab: ArrayBuffer) =>
+            JSON.parse(new TextDecoder().decode(new Uint8Array(ab)))
+        );
+
+        const result = getJsonFieldOffsets(dataArray, sortDefinition);
+        (self as unknown as Worker).postMessage({ cmd: "getJsonFieldOffsets_result", result });
     }
 };
+//# sourceURL=offsetsWorker.js

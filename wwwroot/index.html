@@ -672,6 +672,8 @@ videoDB.deleteObjectStore("${storeName}");<br /><br />
          * (4) Int32Array, (5) Uint32Array, (6) Uint8Array.
          */
         async function manageAllStores() {
+            clearConsole();
+
             // Ensure we have a device/videoDB
             if (!device || !videoDB) {
                 await setupDevice();
@@ -1339,6 +1341,7 @@ videoDB.clear("reallyFakeStore");<br />
 
             logToConsole("");
             logToConsole("[NOTE] Each row is approximately 1KB in size.");
+            logToConsole("[NOTE] Tip: Open Task Manager -> Performance -> GPU while this benchmark runs.");
             logToConsole("");
 
             // Show code snippet in the right panel
@@ -2137,7 +2140,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             if (!['store-lottery',
                 'store-mental-health',
                 'store-anxiety-depression',
-                'store-landslide',
                 'store-causes-death',
                 'store-baby-names',
                 'store-youth-tobacco',
@@ -2166,11 +2168,53 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     }
                     const formattedSize = formatSize(totalBytes);
 
-                    videoDB.createObjectStore(storeName, {
-                        dataType: "JSON",
-                        bufferSize: 10 * 1024 * 1024,
-                        totalRows: jsonRows.length
-                    });
+                    if (storeName === "store-lottery") {
+                        const sortDefinition = [
+                            {
+                                name: "sortByDrawDate",
+                                sortFields: [
+                                    {
+                                        sortColumn: "DrawDate",
+                                        path: "DrawDate",
+                                        sortDirection: "Asc"
+                                    }
+                                ]
+                            },
+                            {
+                                name: "sortByWinningNumbers",
+                                sortFields: [
+                                    {
+                                        sortColumn: "WinningNumbers",
+                                        path: "WinningNumbers",
+                                        sortDirection: "Asc"
+                                    }
+                                ]
+                            },
+                            {
+                                name: "sortByMultiplier",
+                                sortFields: [
+                                    {
+                                        sortColumn: "Multiplier",
+                                        path: "Multiplier",
+                                        sortDirection: "Asc"
+                                    }
+                                ]
+                            }
+                        ];
+
+                        videoDB.createObjectStore(storeName, {
+                            dataType: "JSON",
+                            bufferSize: 10 * 1024 * 1024,
+                            totalRows: jsonRows.length,
+                            sortDefinition: sortDefinition
+                        });
+                    } else {
+                        videoDB.createObjectStore(storeName, {
+                            dataType: "JSON",
+                            bufferSize: 10 * 1024 * 1024,
+                            totalRows: jsonRows.length
+                        });
+                    }
 
                     // Add each row
                     let aKeys = [];
@@ -2270,7 +2314,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
             return dataOutput.map((rowArray) => {
                 const rowObject = {};
                 columnsOutput.forEach((colMeta, idx) => {
-                    const rawName = colMeta.name || colMeta.fieldName || `Column${colMeta.originalIndex}`;
+                    const rawName = (colMeta.name || colMeta.fieldName || `Column${colMeta.originalIndex}`).replace(/ /g, "");
                     const propertyName = sanitizeColumnName(rawName, idx);
                     const cellValue = rowArray[colMeta.originalIndex];
                     rowObject[propertyName] = cellValue;
