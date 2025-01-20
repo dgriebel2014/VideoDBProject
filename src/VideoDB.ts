@@ -21,7 +21,7 @@ export class VideoDB {
     constructor(private device: GPUDevice) {
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
-        this.jsonWorker = new Worker('./js/offsetsWorker.js');
+        this.jsonWorker = new Worker("./js/offsetsWorker.js", { type: "module" });
     }
 
     /**

@@ -1,38 +1,41 @@
 ﻿// offsetsWorker.ts
+/// <reference lib="webworker" />
 
-// Define all the helper functions
+// --- Global error / rejection handlers in the worker ---
+// These should help surface exceptions that otherwise might go nowhere.
+self.onerror = (evt) => {
+    console.error("Worker top-level error:", evt);
+};
+
+self.onunhandledrejection = (evt) => {
+    console.error("Worker unhandled promise rejection:", evt.reason);
+};
+
+// Combine multiple definitions into one
+function combineSortDefinitions(definitions: any[]): any {
+    const combined = { name: "combined", sortFields: [] as any[] };
+    for (const def of definitions) {
+        if (!def || !Array.isArray(def.sortFields)) {
+            console.warn("A sort definition is missing 'sortFields':", def);
+            continue;
+        }
+        for (const field of def.sortFields) {
+            combined.sortFields.push({
+                sortColumn: field.sortColumn,
+                path: field.path,
+                sortDirection: field.sortDirection,
+            });
+        }
+    }
+    return combined;
+}
+
 function buildPathIndexMap(sortDefinition: any) {
     const map: { [path: string]: number } = {};
     sortDefinition.sortFields.forEach((field: any, i: number) => {
         map[field.path] = i;
     });
     return map;
-}
-
-function computeOffsetsForSingleDefinition(dataArray: any[], sortDefinition: any) {
-    const startTime = performance.now ? performance.now() : Date.now();
-
-    const results = dataArray.map((obj) => {
-        const { jsonString, offsets } = serializeObjectWithOffsets(obj, sortDefinition);
-        // Build array of substrings for each tracked field
-        const substrings: string[] = [];
-        for (let i = 0; i < offsets.length; i += 2) {
-            const start = offsets[i];
-            const end = offsets[i + 1];
-            substrings.push(jsonString.substring(start, end));
-        }
-        return [offsets];
-    });
-
-    const endTime = performance.now ? performance.now() : Date.now();
-    const elapsedTime = endTime - startTime;
-
-    console.log("\n=== Webworker Performance Metrics ===");
-    console.log(`Number of objects processed: ${dataArray.length}`);
-    console.log(`Sort Definition: `, sortDefinition);
-    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
-
-    return results;
 }
 
 function serializeValueWithOffsets(
@@ -76,9 +79,9 @@ function serializeValueWithOffsets(
 
     if (valueType === "string") {
         const chunk = JSON.stringify(value);
-
         if (currentPath in pathIndexMap) {
             const idx = pathIndexMap[currentPath] * 2;
+            // If the chunk is wrapped in quotes, adjust offsets to skip them
             if (chunk.length >= 2 && chunk.startsWith('"') && chunk.endsWith('"')) {
                 offsets[idx] = currentOffset + 1;
                 offsets[idx + 1] = currentOffset + chunk.length - 1;
@@ -90,6 +93,7 @@ function serializeValueWithOffsets(
         return { json: chunk, offset: currentOffset + chunk.length };
     }
 
+    // Handle arrays
     if (Array.isArray(value)) {
         let result = "[";
         let localOffset = currentOffset + 1;
@@ -99,8 +103,14 @@ function serializeValueWithOffsets(
                 localOffset += 1;
             }
             const nextPath = currentPath ? `${currentPath}.${i}` : String(i);
-            const { json: childJson, offset: updatedOffset } =
-                serializeValueWithOffsets(value[i], nextPath, pathIndexMap, offsets, nestingLevel + 1, localOffset);
+            const { json: childJson, offset: updatedOffset } = serializeValueWithOffsets(
+                value[i],
+                nextPath,
+                pathIndexMap,
+                offsets,
+                nestingLevel + 1,
+                localOffset
+            );
             result += childJson;
             localOffset = updatedOffset;
         }
@@ -109,7 +119,7 @@ function serializeValueWithOffsets(
         return { json: result, offset: localOffset };
     }
 
-    // It's an object
+    // Handle objects
     let result = "{";
     let localOffset = currentOffset + 1;
     const keys = Object.keys(value);
@@ -121,7 +131,6 @@ function serializeValueWithOffsets(
             result += ",";
             localOffset += 1;
         }
-
         const keyJson = JSON.stringify(key);
         result += keyJson;
         localOffset += keyJson.length;
@@ -129,8 +138,14 @@ function serializeValueWithOffsets(
         result += ":";
         localOffset += 1;
 
-        const { json: childJson, offset: updatedOffset } =
-            serializeValueWithOffsets(value[key], propPath, pathIndexMap, offsets, nestingLevel + 1, localOffset);
+        const { json: childJson, offset: updatedOffset } = serializeValueWithOffsets(
+            value[key],
+            propPath,
+            pathIndexMap,
+            offsets,
+            nestingLevel + 1,
+            localOffset
+        );
         result += childJson;
         localOffset = updatedOffset;
     }
@@ -140,8 +155,11 @@ function serializeValueWithOffsets(
 }
 
 function serializeObjectWithOffsets(obj: any, sortDefinition: any) {
+    // Build the path map so we know which index each path corresponds to
     const pathIndexMap = buildPathIndexMap(sortDefinition);
+    // 2 offsets per field:
     const offsets = new Array(sortDefinition.sortFields.length * 2).fill(0);
+
     const { json: jsonString } = serializeValueWithOffsets(obj, "", pathIndexMap, offsets, 0, 0);
 
     return {
@@ -150,33 +168,79 @@ function serializeObjectWithOffsets(obj: any, sortDefinition: any) {
     };
 }
 
-// Modified to handle single or multiple definitions
-function getJsonFieldOffsets(dataArray: any[], sortDefinitionOrDefinitions: any) {
-    if (Array.isArray(sortDefinitionOrDefinitions)) {
-        // MULTIPLE definitions → return an array of results
-        return sortDefinitionOrDefinitions.map(def => {
-            return computeOffsetsForSingleDefinition(dataArray, def);
-        });
-    } else {
-        // SINGLE definition → return a single result array
-        return computeOffsetsForSingleDefinition(dataArray, sortDefinitionOrDefinitions);
-    }
+function computeOffsetsForSingleDefinition(dataArray: any[], sortDefinition: any) {
+    const startTime = performance.now ? performance.now() : Date.now();
+
+    const results = dataArray.map((obj) => {
+        const { offsets } = serializeObjectWithOffsets(obj, sortDefinition);
+        return [offsets];
+    });
+
+    const endTime = performance.now ? performance.now() : Date.now();
+    const elapsedTime = endTime - startTime;
+
+    console.log("\n=== Webworker Performance Metrics ===");
+    console.log(`Number of objects processed: ${dataArray.length}`);
+    console.log(`Sort Definition: `, sortDefinition);
+    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
+
+    return results;
 }
 
-// Worker "onmessage" listener
+/** Flatten all fields from multiple definitions into one big Uint32Array. */
+function getJsonFieldOffsetsFlattened(dataArray: any[], sortDefinitionOrDefinitions: any): Uint32Array {
+    // Normalize to array
+    const definitions = Array.isArray(sortDefinitionOrDefinitions)
+        ? sortDefinitionOrDefinitions
+        : [sortDefinitionOrDefinitions];
+
+    // Combine them
+    const combinedDefinition = combineSortDefinitions(definitions);
+
+    // Single pass
+    const rowResults = computeOffsetsForSingleDefinition(dataArray, combinedDefinition);
+
+    // Flatten
+    const totalFields = combinedDefinition.sortFields.length;
+    const n = dataArray.length;
+    const finalOffsets = new Uint32Array(n * totalFields * 2);
+
+    for (let i = 0; i < n; i++) {
+        // rowResults[i] is something like [ Uint32Array(...) ]
+        const offsetsForRow = rowResults[i][0];
+        finalOffsets.set(offsetsForRow, i * (2 * totalFields));
+    }
+    return finalOffsets;
+}
+
+// === Worker Listener ===
 self.onmessage = (e: MessageEvent) => {
-    if (!e.data) return;
+    try {
+        if (!e.data) return;
 
-    if (e.data.cmd === "getJsonFieldOffsets") {
-        const { arrayBuffers, sortDefinition } = e.data;
+        if (e.data.cmd === "getJsonFieldOffsets") {
+            const { arrayBuffers, sortDefinition } = e.data;
+            console.log("Worker received 'getJsonFieldOffsets' command.");
 
-        // Parse each ArrayBuffer into an object here in the worker
-        const dataArray = arrayBuffers.map((ab: ArrayBuffer) =>
-            JSON.parse(new TextDecoder().decode(new Uint8Array(ab)))
-        );
+            // Convert each ArrayBuffer into a JSON object
+            const dataArray = arrayBuffers.map((ab: ArrayBuffer) => {
+                const text = new TextDecoder().decode(new Uint8Array(ab));
+                return JSON.parse(text);
+            });
 
-        const result = getJsonFieldOffsets(dataArray, sortDefinition);
-        (self as unknown as Worker).postMessage({ cmd: "getJsonFieldOffsets_result", result });
+            // Compute one flat Uint32Array
+            const flattenedOffsets = getJsonFieldOffsetsFlattened(dataArray, sortDefinition);
+
+            // Send result
+            // NOTE: We transfer the .buffer to avoid copying large data.
+            self.postMessage(
+                { cmd: "getJsonFieldOffsets_result", result: flattenedOffsets },
+                [flattenedOffsets.buffer]
+            );
+            console.log("Worker finished and posted offsets back to main thread.");
+        }
+    } catch (err) {
+        // Catch any runtime errors that occur in the message handler
+        console.error("Worker error in onmessage:", err);
     }
 };
-//# sourceURL=offsetsWorker.js
