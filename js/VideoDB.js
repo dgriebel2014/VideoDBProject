@@ -22,7 +22,7 @@ export class VideoDB {
         this.device = device;
         this.storeMetadataMap = new Map();
         this.storeKeyMap = new Map();
-        this.jsonWorker = new Worker('./js/offsetsWorker.js');
+        this.jsonWorker = new Worker("./js/offsetsWorker.js", { type: "module" });
     }
     /**
      * Creates a new object store with the specified configuration options.
