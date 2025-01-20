@@ -179,19 +179,52 @@
     </p>
     <br />
     <p>
-        <button onclick="downloadFile()">Click here to download VideoDB.ts</button>
+        <button onclick="downloadFiles()">Click here to download VideoDB.ts</button>
         <script>
-            async function downloadFile() {
-                const response = await fetch("https://raw.githubusercontent.com/dgriebel2014/VideoDBProject/master/src/VideoDB.ts");
-                const fileContent = await response.text();
+            async function downloadFiles() {
+                // Define the files to download with their respective URLs and desired filenames
+                const files = [
+                    {
+                        url: "https://raw.githubusercontent.com/dgriebel2014/VideoDBProject/master/src/VideoDB.ts",
+                        name: "VideoDB.ts"
+                    },
+                    {
+                        url: "https://raw.githubusercontent.com/dgriebel2014/VideoDBProject/master/src/offsetsWorker.ts",
+                        name: "offsetsWorker.ts"
+                    }
+                ];
 
-                const blob = new Blob([fileContent], { type: 'text/plain' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = "VideoDB.ts";
-                link.click();
+                for (const file of files) {
+                    try {
+                        // Fetch the file content from the specified URL
+                        const response = await fetch(file.url);
+                        if (!response.ok) {
+                            throw new Error(`Failed to fetch ${file.name}: ${response.status} ${response.statusText}`);
+                        }
 
-                URL.revokeObjectURL(link.href);
+                        // Retrieve the file content as text
+                        const fileContent = await response.text();
+
+                        // Create a Blob from the file content with appropriate MIME type
+                        const blob = new Blob([fileContent], { type: 'text/plain' });
+
+                        // Create a temporary anchor element to initiate the download
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = file.name;
+                        document.body.appendChild(link); // Append to the DOM to make it clickable
+                        link.click(); // Trigger the download
+
+                        // Clean up by removing the temporary link and revoking the object URL
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(link.href);
+
+                        console.log(`Download initiated for ${file.name}`);
+                    } catch (error) {
+                        console.error(`Error downloading ${file.name}:`, error);
+                        alert(`An error occurred while downloading ${file.name}. Please try again.`);
+                    }
+                }
             }
         </script>
         <br /><br />
