@@ -156,10 +156,10 @@ function computeOffsetsForSingleDefinition(dataArray, sortDefinition) {
     });
     const endTime = performance.now ? performance.now() : Date.now();
     const elapsedTime = endTime - startTime;
-    console.log("\n=== Webworker Performance Metrics ===");
-    console.log(`Number of objects processed: ${dataArray.length}`);
-    console.log(`Sort Definition: `, sortDefinition);
-    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
+    //console.log("\n=== Webworker Performance Metrics ===");
+    //console.log(`Number of objects processed: ${dataArray.length}`);
+    //console.log(`Sort Definition: `, sortDefinition);
+    //console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
     return results;
 }
 /** Flatten all fields from multiple definitions into one big Uint32Array. */
@@ -190,7 +190,6 @@ self.onmessage = (e) => {
             return;
         if (e.data.cmd === "getJsonFieldOffsets") {
             const { arrayBuffers, sortDefinition } = e.data;
-            console.log("Worker received 'getJsonFieldOffsets' command.");
             // Convert each ArrayBuffer into a JSON object
             const dataArray = arrayBuffers.map((ab) => {
                 const text = new TextDecoder().decode(new Uint8Array(ab));
@@ -200,7 +199,6 @@ self.onmessage = (e) => {
             const flattenedOffsets = getJsonFieldOffsetsFlattened(dataArray, sortDefinition);
             // Send result (transfer the underlying buffer to avoid copying large data)
             self.postMessage({ cmd: "getJsonFieldOffsets_result", result: flattenedOffsets }, [flattenedOffsets.buffer]);
-            console.log("Worker finished and posted offsets back to main thread.");
         }
     }
     catch (err) {
