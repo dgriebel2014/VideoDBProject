@@ -379,9 +379,9 @@ export class VideoDB {
             const definitions = storeMeta.sortDefinition; // may be a single or an array
             const arrayBuffers = jsonWrites.map(item => item.arrayBuffer);
             if (definitions && definitions.length > 0 && arrayBuffers.length > 0) {
-                // 1) Get the big Uint32Array of offsets from the worker
+                // Get the big Uint32Array of offsets from the worker
                 const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
-                // 2) Loop & print the requested info
+                // Loop & print the requested info
                 // Helper to merge multiple definitions into one (if needed):
                 function combineSortDefinitions(defs) {
                     const combined = { name: "combined", sortFields: [] };
@@ -414,7 +414,6 @@ export class VideoDB {
                     // Original JSON string
                     const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
                     const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
-                    console.log("Original JSON row:", rowString);
                     for (let fieldIdx = 0; fieldIdx < totalFields; fieldIdx++) {
                         const fieldInfo = combinedDefinition.sortFields[fieldIdx];
                         const path = fieldInfo.path;
@@ -423,7 +422,6 @@ export class VideoDB {
                         const endOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2 + 1)];
                         // Slice out the substring from the original row
                         const extractedValue = rowString.substring(startOffset, endOffset);
-                        console.log(`${startOffset}-${endOffset - 1}  ${path} => ${extractedValue}`);
                     }
                 }
             }
@@ -822,23 +820,23 @@ export class VideoDB {
      * Logs consolidated performance metrics to the console.
      */
     logPerformance(initialMetrics, perKeyMetrics) {
-        console.log("** Performance Metrics for getMultiple **", {
-            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
-            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
-            perKeyMetrics: {
-                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
-                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
-                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
-                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
-                mapBufferSubsections: {
-                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
-                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
-                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
-                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
-                },
-                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
-            },
-        });
+        //    console.log("** Performance Metrics for getMultiple **", {
+        //        flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
+        //        metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
+        //        perKeyMetrics: {
+        //            findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+        //            createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+        //            copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+        //            mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+        //            mapBufferSubsections: {
+        //                mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+        //                getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+        //                copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+        //                unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
+        //            },
+        //            deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+        //        },
+        //    });
     }
     /**
      * Flushes all pending writes, then retrieves the store metadata and key map.
@@ -1119,7 +1117,7 @@ export class VideoDB {
         // Read all rows based on expanded keys
         const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
         // Log or accumulate performance
-        this.logPerformance(metrics, perKeyMetrics);
+        // this.logPerformance(metrics, perKeyMetrics);
         return { results, perKeyMetrics };
     }
 }

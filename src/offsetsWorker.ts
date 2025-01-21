@@ -5,7 +5,6 @@
 self.onerror = (evt) => {
     console.error("Worker top-level error:", evt);
 };
-
 self.onunhandledrejection = (evt) => {
     console.error("Worker unhandled promise rejection:", evt.reason);
 };
@@ -195,10 +194,10 @@ function computeOffsetsForSingleDefinition(dataArray: any[], sortDefinition: any
     const endTime = performance.now ? performance.now() : Date.now();
     const elapsedTime = endTime - startTime;
 
-    console.log("\n=== Webworker Performance Metrics ===");
-    console.log(`Number of objects processed: ${dataArray.length}`);
-    console.log(`Sort Definition: `, sortDefinition);
-    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
+    //console.log("\n=== Webworker Performance Metrics ===");
+    //console.log(`Number of objects processed: ${dataArray.length}`);
+    //console.log(`Sort Definition: `, sortDefinition);
+    //console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
 
     return results;
 }
@@ -236,7 +235,6 @@ self.onmessage = (e: MessageEvent) => {
 
         if (e.data.cmd === "getJsonFieldOffsets") {
             const { arrayBuffers, sortDefinition } = e.data;
-            console.log("Worker received 'getJsonFieldOffsets' command.");
 
             // Convert each ArrayBuffer into a JSON object
             const dataArray = arrayBuffers.map((ab: ArrayBuffer) => {
@@ -252,7 +250,6 @@ self.onmessage = (e: MessageEvent) => {
                 { cmd: "getJsonFieldOffsets_result", result: flattenedOffsets },
                 [flattenedOffsets.buffer]
             );
-            console.log("Worker finished and posted offsets back to main thread.");
         }
     } catch (err) {
         // Catch any runtime errors that occur in the message handler
