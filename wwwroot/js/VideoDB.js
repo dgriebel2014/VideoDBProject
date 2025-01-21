@@ -408,7 +408,7 @@ export class VideoDB {
                 const totalFields = combinedDefinition.sortFields.length;
                 // For each row, decode original JSON & use offsets to extract
                 for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
-                    if (rowIndex > 100) {
+                    if (rowIndex > 10) {
                         break;
                     }
                     // Original JSON string
