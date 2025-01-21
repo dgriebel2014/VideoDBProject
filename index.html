@@ -426,16 +426,6 @@
                     event.preventDefault();
                     const task = link.getAttribute('data-task');
 
-                    if (['powerballNumbers',
-                        'mentalHealthCare',
-                        'anxietyDepressionIndicators',
-                        'globalLandslideCatalog',
-                        'causesOfDeath',
-                        'babyNames',
-                        'youthTobacco',
-                        'lapdArrests'].some(substring => task.includes(substring))) {
-                    }
-
                     // Clear both console and code pane before each new task
                     clearCodePane();
 
@@ -458,11 +448,6 @@
                         case 'accuracyTest':
                             await accuracyTest();
                             break;
-                        // The parent "consumePublicData" does nothing now
-                        case 'consumePublicData':
-                             // intentionally left empty
-                            break;
-                        // Child links trigger dataset fetch/store
                         case 'powerballNumbers':
                             await handlePublicJson('powerballNumbers');
                             break;
