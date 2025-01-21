@@ -2385,8 +2385,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     label: 'Youth Tobacco Survey (YTS) Data',
                     storeName: 'store-youth-tobacco',
                     sortDefinition: [
-                        // 1) YEAR -> LocationAbbr -> LocationDesc
-                        //    See data chronologically and then by location.
                         {
                             name: "sortByYearLocation",
                             sortFields: [
@@ -2407,9 +2405,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 2) TopicType -> TopicDesc -> MeasureDesc
-                        //    Group the topic hierarchy and the measure description.
                         {
                             name: "sortByTopicAndMeasure",
                             sortFields: [
@@ -2430,9 +2425,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 3) Data_Value -> Low_Confidence_Limit -> High_Confidence_Limit
-                        //    Focus on the numeric value, then its confidence interval boundaries.
                         {
                             name: "sortByDataValueAndConfidence",
                             sortFields: [
@@ -2453,9 +2445,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 4) Gender -> Race -> Age -> Education
-                        //    Common demographic fields: sort by gender, then race, then age, then education level.
                         {
                             name: "sortByDemographics",
                             sortFields: [
@@ -2481,9 +2470,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 5) TopicTypeId -> TopicId -> MeasureId
-                        //    Sort by numerical IDs that map to topic areas and measures.
                         {
                             name: "sortByIds",
                             sortFields: [
@@ -2504,9 +2490,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 6) StratificationID1 -> StratificationID2 -> StratificationID3 -> StratificationID4 -> SubMeasureID
-                        //    Useful if your data has multiple stratifications or layers (e.g., demographic subgroups, time periods).
                         {
                             name: "sortByStratifications",
                             sortFields: [
@@ -2537,9 +2520,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 7) Sample_Size -> Data_Value
-                        //    For comparing the sample size to the actual measured value.
                         {
                             name: "sortBySampleSizeThenDataValue",
                             sortFields: [
@@ -2555,9 +2535,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 8) DataSource -> Response
-                        //    See data grouped by source (e.g., CDC, state registry), then by response type.
                         {
                             name: "sortByDataSourceThenResponse",
                             sortFields: [
@@ -2573,9 +2550,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                                 }
                             ]
                         },
-
-                        // 9) DisplayOrder -> YEAR
-                        //    If you have a custom display order for topics, then see them by year within that order.
                         {
                             name: "sortByDisplayOrderThenYear",
                             sortFields: [

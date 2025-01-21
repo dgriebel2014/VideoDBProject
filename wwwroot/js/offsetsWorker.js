@@ -2,7 +2,6 @@
 // offsetsWorker.ts
 /// <reference lib="webworker" />
 // --- Global error / rejection handlers in the worker ---
-// These should help surface exceptions that otherwise might go nowhere.
 self.onerror = (evt) => {
     console.error("Worker top-level error:", evt);
 };
@@ -27,54 +26,70 @@ function combineSortDefinitions(definitions) {
     }
     return combined;
 }
+/**
+ * Build a map of path -> array of indices.
+ * If a path is repeated multiple times, each occurrence
+ * gets its own slot in the final offsets array.
+ */
 function buildPathIndexMap(sortDefinition) {
     const map = {};
     sortDefinition.sortFields.forEach((field, i) => {
-        map[field.path] = i;
+        if (!map[field.path]) {
+            map[field.path] = [];
+        }
+        map[field.path].push(i);
     });
     return map;
 }
 function serializeValueWithOffsets(value, currentPath, pathIndexMap, offsets, nestingLevel, currentOffset) {
     if (value === null) {
         const chunk = "null";
-        if (currentPath in pathIndexMap) {
-            const idx = pathIndexMap[currentPath] * 2;
-            offsets[idx] = currentOffset;
-            offsets[idx + 1] = currentOffset + chunk.length;
+        if (pathIndexMap[currentPath]) {
+            for (const fieldIndex of pathIndexMap[currentPath]) {
+                const idx = fieldIndex * 2;
+                offsets[idx] = currentOffset;
+                offsets[idx + 1] = currentOffset + chunk.length;
+            }
         }
         return { json: chunk, offset: currentOffset + chunk.length };
     }
     const valueType = typeof value;
     if (valueType === "boolean") {
         const chunk = value ? "true" : "false";
-        if (currentPath in pathIndexMap) {
-            const idx = pathIndexMap[currentPath] * 2;
-            offsets[idx] = currentOffset;
-            offsets[idx + 1] = currentOffset + chunk.length;
+        if (pathIndexMap[currentPath]) {
+            for (const fieldIndex of pathIndexMap[currentPath]) {
+                const idx = fieldIndex * 2;
+                offsets[idx] = currentOffset;
+                offsets[idx + 1] = currentOffset + chunk.length;
+            }
         }
         return { json: chunk, offset: currentOffset + chunk.length };
     }
     if (valueType === "number") {
         const chunk = Number.isFinite(value) ? String(value) : "null";
-        if (currentPath in pathIndexMap) {
-            const idx = pathIndexMap[currentPath] * 2;
-            offsets[idx] = currentOffset;
-            offsets[idx + 1] = currentOffset + chunk.length;
+        if (pathIndexMap[currentPath]) {
+            for (const fieldIndex of pathIndexMap[currentPath]) {
+                const idx = fieldIndex * 2;
+                offsets[idx] = currentOffset;
+                offsets[idx + 1] = currentOffset + chunk.length;
+            }
         }
         return { json: chunk, offset: currentOffset + chunk.length };
     }
     if (valueType === "string") {
         const chunk = JSON.stringify(value);
-        if (currentPath in pathIndexMap) {
-            const idx = pathIndexMap[currentPath] * 2;
-            // If the chunk is wrapped in quotes, adjust offsets to skip them
-            if (chunk.length >= 2 && chunk.startsWith('"') && chunk.endsWith('"')) {
-                offsets[idx] = currentOffset + 1;
-                offsets[idx + 1] = currentOffset + chunk.length - 1;
-            }
-            else {
-                offsets[idx] = currentOffset;
-                offsets[idx + 1] = currentOffset + chunk.length;
+        if (pathIndexMap[currentPath]) {
+            for (const fieldIndex of pathIndexMap[currentPath]) {
+                const idx = fieldIndex * 2;
+                // If the chunk is wrapped in quotes, skip them for the offsets
+                if (chunk.length >= 2 && chunk.startsWith('"') && chunk.endsWith('"')) {
+                    offsets[idx] = currentOffset + 1;
+                    offsets[idx + 1] = currentOffset + chunk.length - 1;
+                }
+                else {
+                    offsets[idx] = currentOffset;
+                    offsets[idx + 1] = currentOffset + chunk.length;
+                }
             }
         }
         return { json: chunk, offset: currentOffset + chunk.length };
@@ -122,7 +137,7 @@ function serializeValueWithOffsets(value, currentPath, pathIndexMap, offsets, ne
     return { json: result, offset: localOffset };
 }
 function serializeObjectWithOffsets(obj, sortDefinition) {
-    // Build the path map so we know which index each path corresponds to
+    // Build the path map so we know which indices each path corresponds to
     const pathIndexMap = buildPathIndexMap(sortDefinition);
     // 2 offsets per field:
     const offsets = new Array(sortDefinition.sortFields.length * 2).fill(0);
@@ -136,6 +151,7 @@ function computeOffsetsForSingleDefinition(dataArray, sortDefinition) {
     const startTime = performance.now ? performance.now() : Date.now();
     const results = dataArray.map((obj) => {
         const { offsets } = serializeObjectWithOffsets(obj, sortDefinition);
+        // Wrap in array for the flattening step
         return [offsets];
     });
     const endTime = performance.now ? performance.now() : Date.now();
@@ -182,8 +198,7 @@ self.onmessage = (e) => {
             });
             // Compute one flat Uint32Array
             const flattenedOffsets = getJsonFieldOffsetsFlattened(dataArray, sortDefinition);
-            // Send result
-            // NOTE: We transfer the .buffer to avoid copying large data.
+            // Send result (transfer the underlying buffer to avoid copying large data)
             self.postMessage({ cmd: "getJsonFieldOffsets_result", result: flattenedOffsets }, [flattenedOffsets.buffer]);
             console.log("Worker finished and posted offsets back to main thread.");
         }
