@@ -99,9 +99,6 @@ export class VideoDB {
             totalRows: options.totalRows,
             buffers: [],
             rows: [],
-            metadataBuffer: undefined,
-            dirtyMetadata: false,
-            metadataVersion: 0,
 
             // Assign sort definitions if provided
             sortDefinition: options.sortDefinition ?? []
@@ -378,9 +375,6 @@ export class VideoDB {
 
         // Clear the keyMap so there are no active keys
         keyMap.clear();
-
-        // Update store metadata and version
-        this.updateStoreMetadata(storeMeta);
     }
 
     /**
@@ -703,18 +697,6 @@ export class VideoDB {
             return null;
         }
         return rowMetadata;
-    }
-
-    /**
-     * Updates the store metadata to indicate that a change has occurred.
-     * This increments the metadata version and sets the `dirtyMetadata` flag.
-     *
-     * @param {StoreMetadata} storeMeta - The store’s metadata object to be updated.
-     * @returns {void}
-     */
-    private updateStoreMetadata(storeMeta: StoreMetadata): void {
-        storeMeta.dirtyMetadata = true;
-        storeMeta.metadataVersion += 1;
     }
 
     /**

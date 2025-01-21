@@ -16,11 +16,6 @@ export interface StoreMetadata {
     buffers: BufferMetadata[];
     rows: RowMetadata[];
 
-    // GPU mirror fields (not used yet, but in your new design for future use)
-    metadataBuffer?: GPUBuffer;
-    dirtyMetadata: boolean;
-    metadataVersion: number;
-
     // Top-level sort definitions
     sortDefinition?: SortDefinition[];
 }
