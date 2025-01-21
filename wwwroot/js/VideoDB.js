@@ -366,31 +366,74 @@ export class VideoDB {
             await this.flushWrites();
         }
     }
-    /**
-     * Flushes all pending writes (ADD, PUT, DELETE) to the GPU in a batched manner.
-     *
-     * @returns {Promise<void>} A promise that resolves once all pending writes have been applied.
-     */
+    /**************************************
+     * flushWrites Implementation
+     **************************************/
     async flushWrites() {
         if (this.pendingWrites.length === 0) {
             return;
         }
-        // Identify pending writes involving JSON data with a non-empty sortDefinition.
+        // Identify any "JSON" writes that have a non-empty sortDefinition (only 'add'/'put').
         const jsonWrites = this.pendingWrites.filter(pw => pw.storeMeta.dataType === "JSON" &&
             pw.storeMeta.sortDefinition &&
             pw.storeMeta.sortDefinition.length > 0 &&
             (pw.operationType === 'add' || pw.operationType === 'put'));
-        // If any JSON writes exist, send them all in one batch to the offsets worker.
+        // If we found any JSON writes, request offsets from the worker (one batch).
         if (jsonWrites.length > 0) {
             const storeMeta = jsonWrites[0].storeMeta;
-            const definitions = storeMeta.sortDefinition;
+            const definitions = storeMeta.sortDefinition; // may be a single or an array
             const arrayBuffers = jsonWrites.map(item => item.arrayBuffer);
             if (definitions && definitions.length > 0 && arrayBuffers.length > 0) {
+                // 1) Get the big Uint32Array of offsets from the worker
                 const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
-                console.log('offsetsResult', offsetsResult);
+                // 2) Loop & print the requested info
+                // ------------------------------------------------------
+                // Helper to merge multiple definitions into one (if needed):
+                function combineSortDefinitions(defs) {
+                    const combined = { name: "combined", sortFields: [] };
+                    for (const def of defs) {
+                        if (!def || !Array.isArray(def.sortFields)) {
+                            console.warn("A sort definition is missing 'sortFields':", def);
+                            continue;
+                        }
+                        for (const field of def.sortFields) {
+                            combined.sortFields.push({
+                                sortColumn: field.sortColumn,
+                                path: field.path,
+                                sortDirection: field.sortDirection,
+                            });
+                        }
+                    }
+                    return combined;
+                }
+                // Normalize the definitions array & combine
+                const combinedDefinition = Array.isArray(definitions)
+                    ? combineSortDefinitions(definitions)
+                    : combineSortDefinitions([definitions]);
+                // # of fields being tracked
+                const totalFields = combinedDefinition.sortFields.length;
+                // For each row, decode original JSON & use offsets to extract
+                for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
+                    // Original JSON string
+                    const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
+                    const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
+                    console.log("Original JSON row:", rowString);
+                    for (let fieldIdx = 0; fieldIdx < totalFields; fieldIdx++) {
+                        const fieldInfo = combinedDefinition.sortFields[fieldIdx];
+                        const path = fieldInfo.path;
+                        // Offsets for rowIndex & fieldIdx
+                        const startOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2)];
+                        const endOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2 + 1)];
+                        // Slice out the substring from the original row
+                        const extractedValue = rowString.substring(startOffset, endOffset);
+                        console.log(`  ${path} => ${extractedValue}`);
+                    }
+                }
+                // ------------------------------------------------------
             }
         }
-        // Group by GPU buffer
+        // ------------------------------------------------------
+        // Group all pendingWrites by their GPUBuffer
         const writesByBuffer = new Map();
         for (const item of this.pendingWrites) {
             const { gpuBuffer } = item;
@@ -399,11 +442,11 @@ export class VideoDB {
             }
             writesByBuffer.get(gpuBuffer).push(item);
         }
-        // We'll track which writes succeeded
+        // Keep track of which writes succeed
         const successfulWrites = new Set();
-        // For each GPU buffer, do a series of queue.writeBuffer
+        // Sort by offset and write each group
         for (const [gpuBuffer, writeGroup] of writesByBuffer.entries()) {
-            // Sort the group by offset (lowest → highest) to remain consistent
+            // Sort by offset ascending
             writeGroup.sort((a, b) => a.rowMetadata.offset - b.rowMetadata.offset);
             for (const pendingWrite of writeGroup) {
                 try {
@@ -416,11 +459,9 @@ export class VideoDB {
                 }
             }
         }
-        // If needed, ensure the commands complete
-        // (In basic WebGPU usage, queue.writeBuffer is immediate for CPU → GPU data,
-        // but you can await queue.onSubmittedWorkDone() if you need to ensure completion.)
-        // await this.device.queue.onSubmittedWorkDone();
-        // Remove successful writes from pendingWrites
+        // Wait for the GPU queue to finish
+        await this.device.queue.onSubmittedWorkDone();
+        // Remove successful writes from pending
         this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
     }
     /**
