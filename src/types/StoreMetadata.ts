@@ -18,6 +18,7 @@ export interface StoreMetadata {
 
     // Top-level sort definitions
     sortDefinition?: SortDefinition[];
+    pendingSortOffsets?: Map<number, [number, number][]>;
 }
 
 export interface BufferMetadata {

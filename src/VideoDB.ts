@@ -471,6 +471,9 @@ export class VideoDB {
             }
             // Await the flush here
             await this.flushWrites();
+
+            // Await the flush of sorts if there are any
+            // await this.flushSortMetadata();
         }
     }
 
@@ -491,17 +494,19 @@ export class VideoDB {
                 (pw.operationType === 'add' || pw.operationType === 'put')
         );
 
+        let offsetsResult: Uint32Array | null = null;
+        let totalFields = 0;
+
         // If we found any JSON writes, request offsets from the worker (one batch).
         if (jsonWrites.length > 0) {
             const storeMeta = jsonWrites[0].storeMeta;
-            const definitions = storeMeta.sortDefinition;  // may be a single or an array
+            const definitions = storeMeta.sortDefinition; // may be a single or an array
             const arrayBuffers = jsonWrites.map(item => item.arrayBuffer);
 
             if (definitions && definitions.length > 0 && arrayBuffers.length > 0) {
                 // Get the big Uint32Array of offsets from the worker
-                const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
+                offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
 
-                // Loop & print the requested info
                 // Helper to merge multiple definitions into one (if needed):
                 function combineSortDefinitions(defs: any[]): any {
                     const combined = { name: "combined", sortFields: [] as any[] };
@@ -527,28 +532,30 @@ export class VideoDB {
                     : combineSortDefinitions([definitions]);
 
                 // # of fields being tracked
-                const totalFields = combinedDefinition.sortFields.length;
+                totalFields = combinedDefinition.sortFields.length;
+            }
 
-                // For each row, decode original JSON & use offsets to extract
-                for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
-                    if (rowIndex > 10) {
-                        break;
-                    }
-                    // Original JSON string
-                    const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
-                    const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
+            // queue pending offsets here
+            if (offsetsResult && totalFields > 0) {
+                for (let i = 0; i < jsonWrites.length; i++) {
+                    const { storeMeta, rowMetadata } = jsonWrites[i];
+                    const rowId = rowMetadata.rowId;
 
+                    // Build array of [startOffset, endOffset] pairs for each field
+                    const offsetPairs: [number, number][] = [];
                     for (let fieldIdx = 0; fieldIdx < totalFields; fieldIdx++) {
-                        const fieldInfo = combinedDefinition.sortFields[fieldIdx];
-                        const path = fieldInfo.path;
-
-                        // Offsets for rowIndex & fieldIdx
-                        const startOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2)];
-                        const endOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2 + 1)];
-
-                        // Slice out the substring from the original row
-                        const extractedValue = rowString.substring(startOffset, endOffset);
+                        const startOffset = offsetsResult[i * (2 * totalFields) + fieldIdx * 2];
+                        const endOffset = offsetsResult[i * (2 * totalFields) + (fieldIdx * 2 + 1)];
+                        offsetPairs.push([startOffset, endOffset]);
                     }
+
+                    // Initialize the map if needed
+                    if (!storeMeta.pendingSortOffsets) {
+                        storeMeta.pendingSortOffsets = new Map<number, [number, number][]>();
+                    }
+
+                    // Store the row's offset pairs by rowId
+                    storeMeta.pendingSortOffsets.set(rowId, offsetPairs);
                 }
             }
         }
@@ -579,7 +586,6 @@ export class VideoDB {
                         rowMetadata.offset,
                         arrayBuffer
                     );
-
                     successfulWrites.add(pendingWrite);
                 } catch (singleWriteError) {
                     console.error('Error writing single item:', singleWriteError);
