@@ -502,7 +502,6 @@ export class VideoDB {
                 const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
 
                 // 2) Loop & print the requested info
-                // ------------------------------------------------------
                 // Helper to merge multiple definitions into one (if needed):
                 function combineSortDefinitions(defs: any[]): any {
                     const combined = { name: "combined", sortFields: [] as any[] };
@@ -532,6 +531,9 @@ export class VideoDB {
 
                 // For each row, decode original JSON & use offsets to extract
                 for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
+                    if (rowIndex > 100) {
+                        break;
+                    }
                     // Original JSON string
                     const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
                     const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
@@ -549,14 +551,12 @@ export class VideoDB {
                         // Slice out the substring from the original row
                         const extractedValue = rowString.substring(startOffset, endOffset);
 
-                        console.log(`  ${path} => ${extractedValue}`);
+                        console.log(`${startOffset}-${endOffset - 1}  ${path} => ${extractedValue}`);
                     }
                 }
-                // ------------------------------------------------------
             }
         }
 
-        // ------------------------------------------------------
         // Group all pendingWrites by their GPUBuffer
         const writesByBuffer: Map<GPUBuffer, PendingWrite[]> = new Map();
         for (const item of this.pendingWrites) {

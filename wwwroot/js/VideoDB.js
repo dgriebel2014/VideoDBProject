@@ -72,9 +72,6 @@ export class VideoDB {
             totalRows: options.totalRows,
             buffers: [],
             rows: [],
-            metadataBuffer: undefined,
-            dirtyMetadata: false,
-            metadataVersion: 0,
             // Assign sort definitions if provided
             sortDefinition: options.sortDefinition ?? []
         };
@@ -284,8 +281,6 @@ export class VideoDB {
         });
         // Clear the keyMap so there are no active keys
         keyMap.clear();
-        // Update store metadata and version
-        this.updateStoreMetadata(storeMeta);
     }
     /**
      * Opens a cursor for iterating over records in the specified object store.
@@ -387,7 +382,6 @@ export class VideoDB {
                 // 1) Get the big Uint32Array of offsets from the worker
                 const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
                 // 2) Loop & print the requested info
-                // ------------------------------------------------------
                 // Helper to merge multiple definitions into one (if needed):
                 function combineSortDefinitions(defs) {
                     const combined = { name: "combined", sortFields: [] };
@@ -414,6 +408,9 @@ export class VideoDB {
                 const totalFields = combinedDefinition.sortFields.length;
                 // For each row, decode original JSON & use offsets to extract
                 for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
+                    if (rowIndex > 100) {
+                        break;
+                    }
                     // Original JSON string
                     const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
                     const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
@@ -426,13 +423,11 @@ export class VideoDB {
                         const endOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2 + 1)];
                         // Slice out the substring from the original row
                         const extractedValue = rowString.substring(startOffset, endOffset);
-                        console.log(`  ${path} => ${extractedValue}`);
+                        console.log(`${startOffset}-${endOffset - 1}  ${path} => ${extractedValue}`);
                     }
                 }
-                // ------------------------------------------------------
             }
         }
-        // ------------------------------------------------------
         // Group all pendingWrites by their GPUBuffer
         const writesByBuffer = new Map();
         for (const item of this.pendingWrites) {
@@ -549,17 +544,6 @@ export class VideoDB {
             return null;
         }
         return rowMetadata;
-    }
-    /**
-     * Updates the store metadata to indicate that a change has occurred.
-     * This increments the metadata version and sets the `dirtyMetadata` flag.
-     *
-     * @param {StoreMetadata} storeMeta - The store’s metadata object to be updated.
-     * @returns {void}
-     */
-    updateStoreMetadata(storeMeta) {
-        storeMeta.dirtyMetadata = true;
-        storeMeta.metadataVersion += 1;
     }
     /**
      * Retrieves the metadata object for a specified store.
