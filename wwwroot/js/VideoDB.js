@@ -77,6 +77,19 @@ export class VideoDB {
         };
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
+        if (options.dataType === "JSON" && options.sortDefinition && options.sortDefinition.length) {
+            const totalSortFields = options.sortDefinition
+                .reduce((count, def) => count + def.sortFields.length, 0);
+            const bytesPerField = 2 * 4;
+            const rowSize = totalSortFields * bytesPerField;
+            this.createObjectStore(`${storeName}-offsets`, {
+                dataType: "TypedArray",
+                typedArrayType: "Uint32Array",
+                bufferSize: 10 * 1024 * 1024,
+                totalRows: options.totalRows * 2,
+                rowSize: rowSize
+            });
+        }
     }
     /**
      * Deletes an existing object store by name.
@@ -353,19 +366,15 @@ export class VideoDB {
      */
     async checkAndFlush() {
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            console.log('>> checkAndFlush()');
             if (this.flushTimer !== null) {
                 clearTimeout(this.flushTimer);
                 this.flushTimer = null;
             }
             // Await the flush here
             await this.flushWrites();
-            // Await the flush of sorts if there are any
-            // await this.flushSortMetadata();
         }
     }
-    /**************************************
-     * flushWrites Implementation
-     **************************************/
     async flushWrites() {
         if (this.pendingWrites.length === 0) {
             return;
@@ -461,6 +470,7 @@ export class VideoDB {
         await this.device.queue.onSubmittedWorkDone();
         // Remove successful writes from pending
         this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
+        // *** CHAT *** Step 2 - Save all pending offsets in ascending key order
     }
     /**
      * Applies a custom key range to filter the provided keys.
@@ -583,12 +593,10 @@ export class VideoDB {
         return this.allocateNewBufferChunk(storeMeta, size);
     }
     /**
-     * CHANGED: Now creates a buffer with COPY_SRC | COPY_DST (no MAP_WRITE / MAP_READ).
      * @param {StoreMetadata} storeMeta - The metadata of the store that requires a new GPU buffer.
      * @param {number} size - The requested size (though we typically allocate storeMeta.bufferSize).
      */
     createNewBuffer(storeMeta, size) {
-        // REMOVED: GPUBufferUsage.MAP_WRITE
         return this.device.createBuffer({
             size: storeMeta.bufferSize,
             usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
