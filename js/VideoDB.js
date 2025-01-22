@@ -77,6 +77,19 @@ export class VideoDB {
         };
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
+        if (options.dataType === "JSON" && options.sortDefinition && options.sortDefinition.length) {
+            const totalSortFields = options.sortDefinition
+                .reduce((count, def) => count + def.sortFields.length, 0);
+            const bytesPerField = 2 * 4;
+            const rowSize = totalSortFields * bytesPerField;
+            this.createObjectStore(`${storeName}-offsets`, {
+                dataType: "TypedArray",
+                typedArrayType: "Uint32Array",
+                bufferSize: 10 * 1024 * 1024,
+                totalRows: options.totalRows * 2,
+                rowSize: rowSize
+            });
+        }
     }
     /**
      * Deletes an existing object store by name.
@@ -353,6 +366,7 @@ export class VideoDB {
      */
     async checkAndFlush() {
         if (this.pendingWrites.length >= this.BATCH_SIZE) {
+            console.log('>> checkAndFlush()');
             if (this.flushTimer !== null) {
                 clearTimeout(this.flushTimer);
                 this.flushTimer = null;
@@ -361,9 +375,6 @@ export class VideoDB {
             await this.flushWrites();
         }
     }
-    /**************************************
-     * flushWrites Implementation
-     **************************************/
     async flushWrites() {
         if (this.pendingWrites.length === 0) {
             return;
@@ -373,6 +384,8 @@ export class VideoDB {
             pw.storeMeta.sortDefinition &&
             pw.storeMeta.sortDefinition.length > 0 &&
             (pw.operationType === 'add' || pw.operationType === 'put'));
+        let offsetsResult = null;
+        let totalFields = 0;
         // If we found any JSON writes, request offsets from the worker (one batch).
         if (jsonWrites.length > 0) {
             const storeMeta = jsonWrites[0].storeMeta;
@@ -380,8 +393,7 @@ export class VideoDB {
             const arrayBuffers = jsonWrites.map(item => item.arrayBuffer);
             if (definitions && definitions.length > 0 && arrayBuffers.length > 0) {
                 // Get the big Uint32Array of offsets from the worker
-                const offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
-                // Loop & print the requested info
+                offsetsResult = await this.getJsonFieldOffsets(arrayBuffers, definitions);
                 // Helper to merge multiple definitions into one (if needed):
                 function combineSortDefinitions(defs) {
                     const combined = { name: "combined", sortFields: [] };
@@ -405,24 +417,26 @@ export class VideoDB {
                     ? combineSortDefinitions(definitions)
                     : combineSortDefinitions([definitions]);
                 // # of fields being tracked
-                const totalFields = combinedDefinition.sortFields.length;
-                // For each row, decode original JSON & use offsets to extract
-                for (let rowIndex = 0; rowIndex < jsonWrites.length; rowIndex++) {
-                    if (rowIndex > 10) {
-                        break;
-                    }
-                    // Original JSON string
-                    const rowBuffer = jsonWrites[rowIndex].arrayBuffer;
-                    const rowString = new TextDecoder().decode(new Uint8Array(rowBuffer));
+                totalFields = combinedDefinition.sortFields.length;
+            }
+            // queue pending offsets here
+            if (offsetsResult && totalFields > 0) {
+                for (let i = 0; i < jsonWrites.length; i++) {
+                    const { storeMeta, rowMetadata } = jsonWrites[i];
+                    const rowId = rowMetadata.rowId;
+                    // Build array of [startOffset, endOffset] pairs for each field
+                    const offsetPairs = [];
                     for (let fieldIdx = 0; fieldIdx < totalFields; fieldIdx++) {
-                        const fieldInfo = combinedDefinition.sortFields[fieldIdx];
-                        const path = fieldInfo.path;
-                        // Offsets for rowIndex & fieldIdx
-                        const startOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2)];
-                        const endOffset = offsetsResult[rowIndex * (2 * totalFields) + (fieldIdx * 2 + 1)];
-                        // Slice out the substring from the original row
-                        const extractedValue = rowString.substring(startOffset, endOffset);
+                        const startOffset = offsetsResult[i * (2 * totalFields) + fieldIdx * 2];
+                        const endOffset = offsetsResult[i * (2 * totalFields) + (fieldIdx * 2 + 1)];
+                        offsetPairs.push([startOffset, endOffset]);
                     }
+                    // Initialize the map if needed
+                    if (!storeMeta.pendingSortOffsets) {
+                        storeMeta.pendingSortOffsets = new Map();
+                    }
+                    // Store the row's offset pairs by rowId
+                    storeMeta.pendingSortOffsets.set(rowId, offsetPairs);
                 }
             }
         }
@@ -456,6 +470,7 @@ export class VideoDB {
         await this.device.queue.onSubmittedWorkDone();
         // Remove successful writes from pending
         this.pendingWrites = this.pendingWrites.filter(write => !successfulWrites.has(write));
+        // *** CHAT *** Step 2 - Save all pending offsets in ascending key order
     }
     /**
      * Applies a custom key range to filter the provided keys.
@@ -578,12 +593,10 @@ export class VideoDB {
         return this.allocateNewBufferChunk(storeMeta, size);
     }
     /**
-     * CHANGED: Now creates a buffer with COPY_SRC | COPY_DST (no MAP_WRITE / MAP_READ).
      * @param {StoreMetadata} storeMeta - The metadata of the store that requires a new GPU buffer.
      * @param {number} size - The requested size (though we typically allocate storeMeta.bufferSize).
      */
     createNewBuffer(storeMeta, size) {
-        // REMOVED: GPUBufferUsage.MAP_WRITE
         return this.device.createBuffer({
             size: storeMeta.bufferSize,
             usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
