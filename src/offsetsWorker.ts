@@ -1,17 +1,45 @@
-﻿// offsetsWorker.ts
-/// <reference lib="webworker" />
+﻿/// <reference lib="webworker" />
 
-// --- Global error / rejection handlers in the worker ---
+/**
+ * Global top-level error event handler for the worker.
+ * Logs any uncaught errors to the console.
+ *
+ * @param {ErrorEvent} evt The error event object.
+ */
 self.onerror = (evt) => {
     console.error("Worker top-level error:", evt);
 };
+
+/**
+ * Global top-level unhandled promise rejection event handler for the worker.
+ * Logs any promise rejections to the console.
+ *
+ * @param {PromiseRejectionEvent} evt The unhandled rejection event object.
+ */
 self.onunhandledrejection = (evt) => {
     console.error("Worker unhandled promise rejection:", evt.reason);
 };
 
-// Combine multiple definitions into one
-function combineSortDefinitions(definitions: any[]): any {
-    const combined = { name: "combined", sortFields: [] as any[] };
+interface SortField {
+    sortColumn: string;   // e.g. "foo"
+    path: string;         // e.g. "bar[2].baz"
+    sortDirection: string;// e.g. "asc" or "desc"
+}
+
+interface SortDefinition {
+    name: string;
+    sortFields: SortField[];
+}
+
+/**
+ * Combine multiple sort definitions into one.
+ * Each definition has an array of sortFields; this merges them all into a single list.
+ *
+ * @param {SortDefinition[]} definitions Array of individual sort definitions.
+ * @returns {SortDefinition} A new SortDefinition with all sortFields combined.
+ */
+function combineSortDefinitions(definitions: SortDefinition[]): SortDefinition {
+    const combined: SortDefinition = { name: "combined", sortFields: [] };
     for (const def of definitions) {
         if (!def || !Array.isArray(def.sortFields)) {
             console.warn("A sort definition is missing 'sortFields':", def);
@@ -29,13 +57,16 @@ function combineSortDefinitions(definitions: any[]): any {
 }
 
 /**
- * Build a map of path -> array of indices.
- * If a path is repeated multiple times, each occurrence
- * gets its own slot in the final offsets array.
+ * Build a map of paths to array of field indices in the final offset array.
+ * If a path appears multiple times in sortFields, it accumulates multiple indices.
+ * Example: If "title" is in sortFields[0] and sortFields[5], then pathIndexMap["title"] = [0, 5].
+ *
+ * @param {SortDefinition} sortDefinition The sort definition to process.
+ * @returns {Record<string, number[]>} An object mapping each path to an array of offset indices.
  */
-function buildPathIndexMap(sortDefinition: any) {
-    const map: { [path: string]: number[] } = {};
-    sortDefinition.sortFields.forEach((field: any, i: number) => {
+function buildPathIndexMap(sortDefinition: SortDefinition) {
+    const map: Record<string, number[]> = {};
+    sortDefinition.sortFields.forEach((field, i) => {
         if (!map[field.path]) {
             map[field.path] = [];
         }
@@ -44,191 +75,234 @@ function buildPathIndexMap(sortDefinition: any) {
     return map;
 }
 
-function serializeValueWithOffsets(
+/**
+ * Return the new offset after measuring how many characters a value would occupy in JSON,
+ * without actually building the string. Also sets offset ranges in `offsets` if `currentPath`
+ * matches any field in `pathIndexMap`.
+ *
+ * In JSON:
+ * - `null` => length 4
+ * - `true` => length 4
+ * - `false` => length 5
+ * - finite number => length of String(value)
+ * - non-finite number => "null" (length 4)
+ * - string => 2 quotes + length of escaped string
+ * - arrays/objects => account for brackets/braces, commas, colons, etc.
+ *
+ * @param {*} value The current value to measure.
+ * @param {string} currentPath The dot-delimited path for this value (e.g. "foo.bar.0").
+ * @param {Record<string, number[]>} pathIndexMap Mapping of paths to field indices.
+ * @param {Uint32Array} offsets Preallocated array for offsets (2 indices per field).
+ * @param {number} offsetBaseIndex The base index in `offsets` for this particular row/object.
+ * @param {number} currentOffset The current position in the hypothetical JSON string.
+ * @returns {number} The next offset position after measuring this value.
+ */
+function measureValueWithOffsets(
     value: any,
     currentPath: string,
-    pathIndexMap: { [path: string]: number[] },
-    offsets: number[],
-    nestingLevel: number,
+    pathIndexMap: Record<string, number[]>,
+    offsets: Uint32Array,
+    offsetBaseIndex: number,
     currentOffset: number
-): { json: string; offset: number } {
+): number {
+    const relevantFieldIndices = pathIndexMap[currentPath];
+
+    // Handle null
     if (value === null) {
-        const chunk = "null";
-        if (pathIndexMap[currentPath]) {
-            for (const fieldIndex of pathIndexMap[currentPath]) {
-                const idx = fieldIndex * 2;
-                offsets[idx] = currentOffset;
-                offsets[idx + 1] = currentOffset + chunk.length;
+        // "null" => length 4
+        if (relevantFieldIndices) {
+            for (const fieldIndex of relevantFieldIndices) {
+                const outIndex = offsetBaseIndex + fieldIndex * 2;
+                offsets[outIndex] = currentOffset;
+                offsets[outIndex + 1] = currentOffset + 4;
             }
         }
-        return { json: chunk, offset: currentOffset + chunk.length };
+        return currentOffset + 4;
     }
 
     const valueType = typeof value;
+
+    // Boolean
     if (valueType === "boolean") {
-        const chunk = value ? "true" : "false";
-        if (pathIndexMap[currentPath]) {
-            for (const fieldIndex of pathIndexMap[currentPath]) {
-                const idx = fieldIndex * 2;
-                offsets[idx] = currentOffset;
-                offsets[idx + 1] = currentOffset + chunk.length;
+        // "true" => 4, "false" => 5
+        const boolLen = value ? 4 : 5;
+        if (relevantFieldIndices) {
+            for (const fieldIndex of relevantFieldIndices) {
+                const outIndex = offsetBaseIndex + fieldIndex * 2;
+                offsets[outIndex] = currentOffset;
+                offsets[outIndex + 1] = currentOffset + boolLen;
             }
         }
-        return { json: chunk, offset: currentOffset + chunk.length };
+        return currentOffset + boolLen;
     }
 
+    // Number
     if (valueType === "number") {
-        const chunk = Number.isFinite(value) ? String(value) : "null";
-        if (pathIndexMap[currentPath]) {
-            for (const fieldIndex of pathIndexMap[currentPath]) {
-                const idx = fieldIndex * 2;
-                offsets[idx] = currentOffset;
-                offsets[idx + 1] = currentOffset + chunk.length;
-            }
-        }
-        return { json: chunk, offset: currentOffset + chunk.length };
-    }
-
-    if (valueType === "string") {
-        const chunk = JSON.stringify(value);
-        if (pathIndexMap[currentPath]) {
-            for (const fieldIndex of pathIndexMap[currentPath]) {
-                const idx = fieldIndex * 2;
-                // If the chunk is wrapped in quotes, skip them for the offsets
-                if (chunk.length >= 2 && chunk.startsWith('"') && chunk.endsWith('"')) {
-                    offsets[idx] = currentOffset + 1;
-                    offsets[idx + 1] = currentOffset + chunk.length - 1;
-                } else {
-                    offsets[idx] = currentOffset;
-                    offsets[idx + 1] = currentOffset + chunk.length;
+        if (!Number.isFinite(value)) {
+            // "null" => length 4
+            if (relevantFieldIndices) {
+                for (const fieldIndex of relevantFieldIndices) {
+                    const outIndex = offsetBaseIndex + fieldIndex * 2;
+                    offsets[outIndex] = currentOffset;
+                    offsets[outIndex + 1] = currentOffset + 4;
                 }
             }
+            return currentOffset + 4;
+        } else {
+            // e.g. 1234 => length 4 (stringified)
+            const strVal = String(value);
+            const len = strVal.length;
+            if (relevantFieldIndices) {
+                for (const fieldIndex of relevantFieldIndices) {
+                    const outIndex = offsetBaseIndex + fieldIndex * 2;
+                    offsets[outIndex] = currentOffset;
+                    offsets[outIndex + 1] = currentOffset + len;
+                }
+            }
+            return currentOffset + len;
         }
-        return { json: chunk, offset: currentOffset + chunk.length };
     }
 
-    // Handle arrays
+    // String
+    if (valueType === "string") {
+        // Need correct JSON escaping => measure length of JSON.stringify(value)
+        const strJson = JSON.stringify(value);
+        const len = strJson.length;
+        if (relevantFieldIndices) {
+            // Exclude surrounding quotes from the offset range:
+            for (const fieldIndex of relevantFieldIndices) {
+                const outIndex = offsetBaseIndex + fieldIndex * 2;
+                offsets[outIndex] = currentOffset + 1;          // skip leading quote
+                offsets[outIndex + 1] = currentOffset + len - 1; // skip trailing quote
+            }
+        }
+        return currentOffset + len;
+    }
+
+    // Array
     if (Array.isArray(value)) {
-        let result = "[";
-        let localOffset = currentOffset + 1;
+        // '[' + ']' + commas + children
+        let localOffset = currentOffset + 1; // account for '['
         for (let i = 0; i < value.length; i++) {
             if (i > 0) {
-                result += ",";
-                localOffset += 1;
+                localOffset += 1; // comma
             }
             const nextPath = currentPath ? `${currentPath}.${i}` : String(i);
-            const { json: childJson, offset: updatedOffset } = serializeValueWithOffsets(
+            localOffset = measureValueWithOffsets(
                 value[i],
                 nextPath,
                 pathIndexMap,
                 offsets,
-                nestingLevel + 1,
+                offsetBaseIndex,
                 localOffset
             );
-            result += childJson;
-            localOffset = updatedOffset;
         }
-        result += "]";
-        localOffset += 1;
-        return { json: result, offset: localOffset };
+        return localOffset + 1; // account for ']'
     }
 
-    // Handle objects
-    let result = "{";
-    let localOffset = currentOffset + 1;
+    // Object
+    let localOffset = currentOffset + 1; // account for '{'
     const keys = Object.keys(value);
     for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         const propPath = currentPath ? `${currentPath}.${key}` : key;
 
         if (i > 0) {
-            result += ",";
-            localOffset += 1;
+            localOffset += 1; // comma
         }
-        const keyJson = JSON.stringify(key);
-        result += keyJson;
-        localOffset += keyJson.length;
 
-        result += ":";
+        // Key in quotes
+        const keyJson = JSON.stringify(key);
+        const keyLen = keyJson.length;
+        localOffset += keyLen; // length of the serialized key
+
+        // colon
         localOffset += 1;
 
-        const { json: childJson, offset: updatedOffset } = serializeValueWithOffsets(
+        // measure the child value
+        localOffset = measureValueWithOffsets(
             value[key],
             propPath,
             pathIndexMap,
             offsets,
-            nestingLevel + 1,
+            offsetBaseIndex,
             localOffset
         );
-        result += childJson;
-        localOffset = updatedOffset;
     }
-    result += "}";
-    localOffset += 1;
-    return { json: result, offset: localOffset };
+    return localOffset + 1; // account for '}'
 }
 
-function serializeObjectWithOffsets(obj: any, sortDefinition: any) {
-    // Build the path map so we know which indices each path corresponds to
-    const pathIndexMap = buildPathIndexMap(sortDefinition);
-    // 2 offsets per field:
-    const offsets = new Array(sortDefinition.sortFields.length * 2).fill(0);
-
-    const { json: jsonString } = serializeValueWithOffsets(obj, "", pathIndexMap, offsets, 0, 0);
-
-    return {
-        jsonString,
-        offsets: new Uint32Array(offsets),
-    };
-}
-
-function computeOffsetsForSingleDefinition(dataArray: any[], sortDefinition: any) {
+/**
+ * For a single combined definition, compute all offsets for each object in `dataArray`.
+ * Stores results directly into a preallocated `Uint32Array` to avoid intermediate allocations.
+ *
+ * @param {any[]} dataArray The array of parsed JSON objects.
+ * @param {SortDefinition} sortDefinition The combined sort definition to apply.
+ * @param {Uint32Array} finalOffsets The preallocated offsets array to fill (2 offsets per field).
+ */
+function computeOffsetsInPlace(
+    dataArray: any[],
+    sortDefinition: SortDefinition,
+    finalOffsets: Uint32Array
+) {
     const startTime = performance.now ? performance.now() : Date.now();
 
-    const results = dataArray.map((obj) => {
-        const { offsets } = serializeObjectWithOffsets(obj, sortDefinition);
-        // Wrap in array for the flattening step
-        return [offsets];
-    });
+    const pathIndexMap = buildPathIndexMap(sortDefinition);
+    const fieldsCount = sortDefinition.sortFields.length;
+
+    for (let i = 0; i < dataArray.length; i++) {
+        const obj = dataArray[i];
+        // Each row consumes (fieldsCount * 2) entries in finalOffsets
+        const offsetBaseIndex = i * (fieldsCount * 2);
+        measureValueWithOffsets(obj, "", pathIndexMap, finalOffsets, offsetBaseIndex, 0);
+    }
 
     const endTime = performance.now ? performance.now() : Date.now();
     const elapsedTime = endTime - startTime;
 
-    //console.log("\n=== Webworker Performance Metrics ===");
-    //console.log(`Number of objects processed: ${dataArray.length}`);
-    //console.log(`Sort Definition: `, sortDefinition);
-    //console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
-
-    return results;
+    console.log("\n=== Webworker Performance Metrics ===");
+    console.log(`Number of objects processed: ${dataArray.length}`);
+    console.log(`Sort Definition: `, sortDefinition);
+    console.log(`Time taken: ${elapsedTime.toFixed(3)} ms`);
 }
 
-/** Flatten all fields from multiple definitions into one big Uint32Array. */
-function getJsonFieldOffsetsFlattened(dataArray: any[], sortDefinitionOrDefinitions: any): Uint32Array {
-    // Normalize to array
+/**
+ * Computes a single flat `Uint32Array` of offsets for every object in `dataArray`,
+ * across all fields in one or more sort definitions.
+ *
+ * @param {any[]} dataArray The array of parsed JSON objects to process.
+ * @param {SortDefinition | SortDefinition[]} sortDefinitionOrDefinitions One or multiple definitions.
+ * @returns {Uint32Array} A flat array of offsets (2 per field) for all rows.
+ */
+function getJsonFieldOffsetsFlattened(
+    dataArray: any[],
+    sortDefinitionOrDefinitions: SortDefinition | SortDefinition[]
+): Uint32Array {
+    // Normalize to an array of definitions
     const definitions = Array.isArray(sortDefinitionOrDefinitions)
         ? sortDefinitionOrDefinitions
         : [sortDefinitionOrDefinitions];
 
     // Combine them
     const combinedDefinition = combineSortDefinitions(definitions);
-
-    // Single pass
-    const rowResults = computeOffsetsForSingleDefinition(dataArray, combinedDefinition);
-
-    // Flatten
     const totalFields = combinedDefinition.sortFields.length;
-    const n = dataArray.length;
-    const finalOffsets = new Uint32Array(n * totalFields * 2);
 
-    for (let i = 0; i < n; i++) {
-        // rowResults[i] is something like [ Uint32Array(...) ]
-        const offsetsForRow = rowResults[i][0];
-        finalOffsets.set(offsetsForRow, i * (2 * totalFields));
-    }
+    // Allocate one large buffer for offsets (2 offsets per field, per row)
+    const finalOffsets = new Uint32Array(dataArray.length * totalFields * 2);
+
+    // Populate offsets in a single pass
+    computeOffsetsInPlace(dataArray, combinedDefinition, finalOffsets);
+
     return finalOffsets;
 }
 
-// === Worker Listener ===
+/**
+ * Main worker message handler.
+ * When receiving a "getJsonFieldOffsets" message, it decodes each ArrayBuffer as JSON,
+ * computes the offsets via `getJsonFieldOffsetsFlattened`, and posts the result back.
+ *
+ * @param {MessageEvent} e The incoming message event.
+ */
 self.onmessage = (e: MessageEvent) => {
     try {
         if (!e.data) return;
@@ -242,17 +316,16 @@ self.onmessage = (e: MessageEvent) => {
                 return JSON.parse(text);
             });
 
-            // Compute one flat Uint32Array
+            // Compute one flat Uint32Array of offsets
             const flattenedOffsets = getJsonFieldOffsetsFlattened(dataArray, sortDefinition);
 
-            // Send result (transfer the underlying buffer to avoid copying large data)
+            // Transfer the underlying buffer back to main thread
             self.postMessage(
                 { cmd: "getJsonFieldOffsets_result", result: flattenedOffsets },
                 [flattenedOffsets.buffer]
             );
         }
     } catch (err) {
-        // Catch any runtime errors that occur in the message handler
         console.error("Worker error in onmessage:", err);
     }
 };
