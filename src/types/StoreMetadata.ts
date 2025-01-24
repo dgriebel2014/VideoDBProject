@@ -76,3 +76,12 @@ export interface SortField {
     path: string;
     sortDirection: "Asc" | "Desc";
 }
+export interface PendingWrite {
+    storeMeta: StoreMetadata;
+    rowMetadata: RowMetadata;
+    arrayBuffer: ArrayBuffer;
+    gpuBuffer: GPUBuffer;
+    operationType: 'add' | 'put' | 'delete';
+    key?: string; // Required for 'delete' operations
+}
+
