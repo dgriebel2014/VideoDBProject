@@ -1267,23 +1267,23 @@ export class VideoDB {
      * @returns {void}
      */
     private logPerformance(initialMetrics: InitialMetrics, perKeyMetrics: PerKeyMetrics) {
-            console.log("** Performance Metrics for getMultiple **", {
-                flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
-                metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
-                perKeyMetrics: {
-                    findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
-                    createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
-                    copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
-                    mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
-                    mapBufferSubsections: {
-                        mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
-                        getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
-                        copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
-                        unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
-                    },
-                    deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
-                },
-            });
+    //        console.log("** Performance Metrics for getMultiple **", {
+    //            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
+    //            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
+    //            perKeyMetrics: {
+    //                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+    //                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+    //                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+    //                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+    //                mapBufferSubsections: {
+    //                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+    //                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+    //                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+    //                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
+    //                },
+    //                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+    //            },
+    //        });
     }
 
     /**
