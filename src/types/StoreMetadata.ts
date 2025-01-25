@@ -1,4 +1,6 @@
 // types/StoreMetadata.ts
+// types/StoreMetadata.ts
+// types/StoreMetadata.ts
 export interface StoreMetadata {
     storeName: string;
     dataType: "TypedArray" | "ArrayBuffer" | "JSON";
@@ -19,6 +21,12 @@ export interface StoreMetadata {
     // Top-level sort definitions
     sortDefinition?: SortDefinition[];
     pendingSortOffsets?: Map<number, [number, number][]>;
+
+    /**
+     * True if the store’s sort orders are potentially out of date (due to new writes).
+     * Must never be null or undefined; default to false when the store is created.
+     */
+    sortsDirty: boolean;
 }
 
 export interface BufferMetadata {

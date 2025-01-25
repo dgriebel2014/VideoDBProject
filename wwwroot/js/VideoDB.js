@@ -73,10 +73,11 @@ export class VideoDB {
             sortDefinition: options.sortDefinition?.map(def => ({
                 name: def.name,
                 sortFields: def.sortFields.map(field => ({
-                    dataType: "string", // Default to "string", update as needed
+                    dataType: "string",
                     ...field
                 }))
-            })) ?? []
+            })) ?? [],
+            sortsDirty: false
         };
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
@@ -146,6 +147,7 @@ export class VideoDB {
         const fieldOffsets = (storeMeta.dataType === "JSON" && storeMeta.sortDefinition?.length)
             ? this.getJsonFieldOffsetsFlattened(value, storeMeta.sortDefinition)
             : null;
+        // (Optional debugging snippet left as-is)
         if (fieldOffsets && Math.random() < 0.0005) {
             console.log('value: ', value);
             console.log('field offsets: ', fieldOffsets);
@@ -172,6 +174,8 @@ export class VideoDB {
         });
         // If we have fieldOffsets, write them to the `-offsets` store
         if (fieldOffsets) {
+            // Mark the store’s sorts as dirty since we added data
+            storeMeta.sortsDirty = true;
             const offsetsStoreName = `${storeName}-offsets`;
             const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
             if (offsetsStoreMeta) {
@@ -243,6 +247,8 @@ export class VideoDB {
         });
         // If we have fieldOffsets, write them to the `-offsets` store
         if (fieldOffsets) {
+            // Mark the store’s sorts as dirty, since we updated or created a record
+            storeMeta.sortsDirty = true;
             const offsetsStoreName = `${storeName}-offsets`;
             const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
             if (offsetsStoreMeta) {
@@ -919,6 +925,11 @@ export class VideoDB {
     /**
      * Resets the timer that triggers an automatic flush of pending writes.
      * If the timer is already running, it is cleared and restarted.
+     * Once the timer fires, this method:
+     *  1) flushes all pending writes,
+     *  2) rebuilds all dirty sorts by calling `rebuildAllDirtySorts`,
+     *  3) resolves the internal `readyResolver` if present,
+     *  4) sets `isReady` to `true`.
      *
      * @private
      * @returns {void}
@@ -927,18 +938,44 @@ export class VideoDB {
         if (this.flushTimer !== null) {
             clearTimeout(this.flushTimer);
         }
-        this.flushTimer = window.setTimeout(() => {
-            this.flushWrites().catch(error => {
-                console.error('Error during timed flushWrites:', error);
-            });
-            this.flushTimer = null;
-            if (this.readyResolver) {
-                this.readyResolver();
-                this.readyResolver = null;
-                this.waitUntilReadyPromise = null;
+        this.flushTimer = window.setTimeout(async () => {
+            try {
+                await this.flushWrites();
+                await this.rebuildAllDirtySorts();
             }
-            this.isReady = true;
+            catch (error) {
+                console.error('Error during timed flush operation:', error);
+            }
+            finally {
+                this.flushTimer = null;
+                if (this.readyResolver) {
+                    this.readyResolver();
+                    this.readyResolver = null;
+                    this.waitUntilReadyPromise = null;
+                }
+                this.isReady = true;
+            }
         }, 250);
+    }
+    /**
+     * Rebuilds all dirty sorts across all stores that have `sortsDirty = true`.
+     * For each such store, this method calls `rebuildStoreBySortDefinition(storeName, sortDefinitionName)`
+     * for every sort definition in that store, awaiting completion in sequence.
+     *
+     * @private
+     * @returns {Promise<void>} A promise that resolves once all dirty sorts have been rebuilt.
+     */
+    async rebuildAllDirtySorts() {
+        for (const [storeName, storeMeta] of this.storeMetadataMap.entries()) {
+            if (storeMeta.sortsDirty) {
+                storeMeta.sortsDirty = false; // reset the flag before starting
+                if (storeMeta.sortDefinition && storeMeta.sortDefinition.length > 0) {
+                    for (const def of storeMeta.sortDefinition) {
+                        await this.rebuildStoreBySortDefinition(storeName, def.name);
+                    }
+                }
+            }
+        }
     }
     /**
      * Logs performance metrics for debugging and analysis purposes.
@@ -1491,6 +1528,69 @@ export class VideoDB {
             map[field.path].push(i);
         });
         return map;
+    }
+    /**
+     * Triggers a GPU-based sort for a specific store and one named sort definition.
+     *
+     * @param {string} storeName - The name of the object store to be sorted.
+     * @param {string} sortDefinitionName - The name of the sort definition to apply.
+     * @returns {Promise<void>} A promise that resolves once the sort operation is complete.
+     * @throws {Error} If the store does not exist or the named sort definition is not found.
+     */
+    async rebuildStoreBySortDefinition(storeName, sortDefinitionName) {
+        // Retrieve the store metadata
+        const storeMeta = this.storeMetadataMap.get(storeName);
+        if (!storeMeta) {
+            throw new Error(`Object store "${storeName}" does not exist.`);
+        }
+        storeMeta.sortsDirty = false;
+        // Find the specified sort definition by name
+        const sortDef = storeMeta.sortDefinition?.find(def => def.name === sortDefinitionName);
+        if (!sortDef) {
+            throw new Error(`Sort definition "${sortDefinitionName}" not found in store "${storeName}".`);
+        }
+        // Confirm that we actually have some fields to sort by
+        if (!sortDef.sortFields || sortDef.sortFields.length === 0) {
+            // No fields defined, no need to sort
+            console.warn(`Sort definition "${sortDefinitionName}" has no fields; skipping sort.`);
+            return;
+        }
+        // Execute the GPU-based sort for this definition.
+        //    - This is a placeholder call to whatever GPU compute routine
+        //      will reorder the row ID array for the store.
+        //    - The "rowIdBuffer", "offsetBuffer", "jsonBuffer", etc. 
+        //      would get wired in here.
+        await this.runGpuSortForDefinition(storeMeta, sortDef);
+        // Optionally, you might mark the store as "sorted" or log completion
+        console.log(`GPU sort stub completed for store "${storeName}", definition "${sortDefinitionName}"`);
+    }
+    /**
+     * Placeholder method that invokes your actual GPU sorting pipeline.
+     * In a real implementation, this is where you:
+     *  - Build/validate your rowIdBuffer, offsetBuffer, etc.
+     *  - Create or update your uniform data (sort fields, directions, etc.).
+     *  - Dispatch the compute passes or bitonic/odd-even mergesort steps.
+     *  - Wait for the GPU queue to complete before resolving.
+     *
+     * @param {StoreMetadata} storeMeta - Store metadata object.
+     * @param {SortDefinition} sortDef - A single sort definition (with possibly multiple fields).
+     */
+    async runGpuSortForDefinition(storeMeta, sortDef) {
+        // --------------------------------------------------------------------
+        // NOTE: Implementation detail is intentionally omitted here.
+        // You would do something like:
+        //   1) Map or prepare the "rowIdBuffer" (which references each row).
+        //   2) Bind the "offsetBuffer" that has [start,end] for each field for each row.
+        //   3) Pass "sortDef.sortFields" as a uniform or push constants
+        //      to define ascending/descending, field index, etc.
+        //   4) Run your GPU sorting loop (multiple dispatches) to reorder rowIdBuffer in place.
+        //   5) Possibly wait for GPU queue to finish before returning.
+        // --------------------------------------------------------------------
+        // PSEUDO-EXAMPLE ONLY:
+        // await this.buildSortUniforms(sortDef.sortFields);
+        // this.dispatchBitonicSortPipeline(rowIdBuffer, offsetBuffer, jsonBuffer, uniformData);
+        // await this.device.queue.onSubmittedWorkDone();
+        return Promise.resolve();
     }
 }
 // For convenience, define a simple flag for inactive rows, e.g. 0x1.
