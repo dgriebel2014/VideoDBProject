@@ -84,7 +84,7 @@ export class VideoDB {
                 dataType: "TypedArray",
                 typedArrayType: "Uint32Array",
                 bufferSize: 10 * 1024 * 1024,
-                totalRows: options.totalRows * 2,
+                totalRows: options.totalRows,
                 rowSize: rowSize
             });
         }
@@ -932,23 +932,23 @@ export class VideoDB {
      * @returns {void}
      */
     logPerformance(initialMetrics, perKeyMetrics) {
-        //    console.log("** Performance Metrics for getMultiple **", {
-        //        flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
-        //        metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
-        //        perKeyMetrics: {
-        //            findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
-        //            createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
-        //            copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
-        //            mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
-        //            mapBufferSubsections: {
-        //                mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
-        //                getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
-        //                copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
-        //                unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
-        //            },
-        //            deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
-        //        },
-        //    });
+        console.log("** Performance Metrics for getMultiple **", {
+            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
+            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
+            perKeyMetrics: {
+                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+                mapBufferSubsections: {
+                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
+                },
+                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+            },
+        });
     }
     /**
      * Flushes all pending writes to the GPU and then returns the store metadata and key map.
@@ -1275,7 +1275,7 @@ export class VideoDB {
         // Read all rows based on expanded keys
         const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
         // Log or accumulate performance
-        // this.logPerformance(metrics, perKeyMetrics);
+        this.logPerformance(metrics, perKeyMetrics);
         return { results, perKeyMetrics };
     }
     /**
