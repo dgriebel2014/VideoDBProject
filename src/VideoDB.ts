@@ -1,4 +1,7 @@
-﻿// videoDB.ts
+﻿// Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
+// Distributed under the MIT license.
+
+// videoDB.ts
 /**
  * A VideoDB class that stores all metadata in CPU memory, 
  * and actual data on the GPU
@@ -145,7 +148,7 @@ export class VideoDB {
 
     /**
      * Adds a new record to the specified store without immediately writing to the GPU.
-     * Instead, it caches the data in a pending-writes array. Once no writes occur for 1 second,
+     * Instead, it caches the data in a pending-writes array. Once no writes occur for 250 ms,
      * this method triggers a flush to the GPU. If the store is defined as `dataType: "JSON"` and
      * has one or more `sortDefinition`s, this method will also compute and store field-offset data
      * in the `<storeName>-offsets` store under the same key.
@@ -1954,10 +1957,127 @@ export class VideoDB {
 
         return finalOffsets;
     }
+
+    /**
+     * Confirms that the offset data in "<storeName>-offsets" actually points
+     * to the correct substring locations inside the JSON data in "storeName".
+     *
+     * For each key:
+     *   1) Reads the JSON data from the main store (storeName).
+     *   2) Reads the offset array from the offsets store ("<storeName>-offsets").
+     *   3) Uses the combined sortDefinition from the main store to interpret each pair of [start, end] offsets.
+     *   4) Extracts that substring from the JSON string and prints a console.log message so you can visually verify.
+     *
+     * @param storeName The name of the JSON store (e.g. "Videos"). 
+     *                  The offsets store is assumed to be storeName + "-offsets".
+     * @param maxKeys   An optional limit on how many keys to verify (to avoid huge console spam).
+     */
+    public async confirmJsonOffsets(storeName: string, maxKeys: number = 25): Promise<void> {
+        // Retrieve the metadata for the main JSON store
+        const storeMeta = this.storeMetadataMap.get(storeName);
+        if (!storeMeta) {
+            console.warn(`Store "${storeName}" not found. Aborting offset check.`);
+            return;
+        }
+        if (storeMeta.dataType !== "JSON" || !storeMeta.sortDefinition?.length) {
+            console.warn(
+                `Store "${storeName}" does not appear to be JSON or doesn't have any sortDefinition. Aborting offset check.`
+            );
+            return;
+        }
+
+        // Retrieve the associated offsets store metadata
+        const offsetsStoreName = `${storeName}-offsets`;
+        const offsetsMeta = this.storeMetadataMap.get(offsetsStoreName);
+        if (!offsetsMeta) {
+            console.warn(
+                `Offsets store "${offsetsStoreName}" not found. Make sure you createdObjectStore(...) with a sortDefinition.`
+            );
+            return;
+        }
+
+        // Combine the sortDefinitions so we know the order in which fields appear.
+        const combinedSortDefinition = this.combineSortDefinitions(storeMeta.sortDefinition);
+        const totalFields = combinedSortDefinition.sortFields.length;
+        if (totalFields === 0) {
+            console.warn(
+                `No sort fields found in ${storeName} sortDefinition. Nothing to verify.`
+            );
+            return;
+        }
+
+        // Get all keys from the main store’s keyMap, so we can read them
+        const keyMap = this.storeKeyMap.get(storeName);
+        if (!keyMap) {
+            console.warn(`No keyMap found for store "${storeName}". Aborting offset check.`);
+            return;
+        }
+        const allKeys = Array.from(keyMap.keys());
+
+        // Optional: limit how many we check
+        const keysToCheck = allKeys.slice(0, maxKeys);
+
+        console.log(`\n---- Validating JSON Offsets for store "${storeName}" ----`);
+        console.log(
+            `Checking up to ${keysToCheck.length} key(s) (out of ${allKeys.length}) and verifying each field offset.\n`
+        );
+
+        // Fetch the main JSON data and offset data for these keys
+        const mainRecords = await this.getMultiple(storeName, keysToCheck);
+        const offsetRecords = await this.getMultiple(offsetsStoreName, keysToCheck);
+
+        // For each key, parse the JSON, then verify the offset pairs
+        for (let i = 0; i < keysToCheck.length; i++) {
+            const key = keysToCheck[i];
+            const jsonObject = mainRecords[i];
+            const offsetArray = offsetRecords[i] as ArrayBuffer | null;
+            // (If your offsets store is definitely typed as "Uint32Array", then this is an ArrayBuffer.)
+            // If offsetArray == null, that means no offsets found for this key.
+
+            if (jsonObject == null || offsetArray == null) {
+                console.warn(
+                    `[${storeName}] Key="${key}" => either main record or offset record is null. Skipping.`
+                );
+                continue;
+            }
+
+            // Convert the offset data to a Uint32Array
+            const offsets = new Uint32Array(offsetArray);
+
+            // Re-serialize the JSON object the same way we do when writing
+            // (minus the trailing spaces that pad to multiple-of-4 bytes).
+            let jsonStr = JSON.stringify(jsonObject);
+
+            // For each field in the combined sort definition, pick up the [startOffset, endOffset] pair
+            // from `offsets`.
+            console.log(`\nKey="${key}" => verifying ${totalFields} field offsets:`);
+            for (let fieldIndex = 0; fieldIndex < totalFields; fieldIndex++) {
+                // Each field has 2 slots in offsets: 
+                // [startOffset, endOffset]
+                const start = offsets[fieldIndex * 2];
+                const end = offsets[fieldIndex * 2 + 1];
+                const fieldInfo = combinedSortDefinition.sortFields[fieldIndex];
+
+                // Safeguard if the offsets are out of range
+                if (end > jsonStr.length || start > end) {
+                    console.warn(
+                        `   - Field #${fieldIndex} path="${fieldInfo.path}" has out-of-range offsets [${start},${end}] for JSON length=${jsonStr.length}.`
+                    );
+                    continue;
+                }
+
+                // Grab the actual substring from the JSON
+                const substring = jsonStr.substring(start, end);
+                console.log(
+                    `   - Field #${fieldIndex}: path="${fieldInfo.path}", offsetRange=[${start},${end}), substring="${substring}"`
+                );
+            }
+        }
+
+        console.log(`\n---- Finished offset validation for store "${storeName}" ----\n`);
+    }
 }
 
-// Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
-// Distributed under the MIT license.
 import {
     StoreMetadata,
     BufferMetadata,

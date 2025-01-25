@@ -2102,665 +2102,141 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
         async function handlePublicJson(datasetTask) {
             // Provide a small mapping from sub-link task → data config
             const datasetConfig = {
-                powerballNumbers: {
-                    url: 'https://data.ny.gov/api/views/d6yy-54nr/rows.json?accessType=DOWNLOAD',
-                    label: 'Lottery Powerball Winning Numbers: Beginning 2010',
-                    storeName: 'store-lottery',
-                    sortDefinition: [
-                        {
-                            name: "sortByDrawDate",
-                            sortFields: [
-                                {
-                                    sortColumn: "DrawDate",
-                                    path: "DrawDate",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByWinningNumbers",
-                            sortFields: [
-                                {
-                                    sortColumn: "WinningNumbers",
-                                    path: "WinningNumbers",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByMultiplier",
-                            sortFields: [
-                                {
-                                    sortColumn: "Multiplier",
-                                    path: "Multiplier",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                mentalHealthCare: {
-                    url: 'https://data.cdc.gov/api/views/yni7-er2q/rows.json?accessType=DOWNLOAD',
-                    label: 'Mental Health Care in the Last 4 Weeks',
-                    storeName: 'store-mental-health',
-                    sortDefinition: [
-                        {
-                            "name": "sortByIndicator",
-                            "sortFields": [
-                                {
-                                    "sortColumn": "Indicator",
-                                    "path": "Indicator",
-                                    "sortDirection": "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            "name": "sortByState",
-                            "sortFields": [
-                                {
-                                    "sortColumn": "State",
-                                    "path": "State",
-                                    "sortDirection": "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            "name": "sortByTimePeriodStartDate",
-                            "sortFields": [
-                                {
-                                    "sortColumn": "TimePeriodStartDate",
-                                    "path": "TimePeriodStartDate",
-                                    "sortDirection": "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            "name": "sortByValue",
-                            "sortFields": [
-                                {
-                                    "sortColumn": "Value",
-                                    "path": "Value",
-                                    "sortDirection": "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                anxietyDepressionIndicators: {
-                    url: 'https://data.cdc.gov/api/views/8pt5-q6wp/rows.json?accessType=DOWNLOAD',
-                    label: 'Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms',
-                    storeName: 'store-anxiety-depression',
-                    sortDefinition: [
-                        {
-                            name: "sortByIndicatorThenGroupThenSubgroup",
-                            sortFields: [
-                                {
-                                    sortColumn: "Indicator",
-                                    path: "Indicator",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Group",
-                                    path: "Group",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Subgroup",
-                                    path: "Subgroup",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByStateThenPhaseThenTimePeriod",
-                            sortFields: [
-                                {
-                                    sortColumn: "State",
-                                    path: "State",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Phase",
-                                    path: "Phase",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "TimePeriod",
-                                    path: "TimePeriod",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByTimePeriodStartEndDateThenLabel",
-                            sortFields: [
-                                {
-                                    sortColumn: "TimePeriodStartDate",
-                                    path: "TimePeriodStartDate",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "TimePeriodEndDate",
-                                    path: "TimePeriodEndDate",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "TimePeriodLabel",
-                                    path: "TimePeriodLabel",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByValueThenLowCIThenHighCI",
-                            sortFields: [
-                                {
-                                    sortColumn: "Value",
-                                    path: "Value",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LowCI",
-                                    path: "LowCI",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "HighCI",
-                                    path: "HighCI",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByConfidenceIntervalThenQuartileRange",
-                            sortFields: [
-                                {
-                                    sortColumn: "ConfidenceInterval",
-                                    path: "ConfidenceInterval",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "QuartileRange",
-                                    path: "QuartileRange",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                causesOfDeath: {
-                    url: 'https://data.cdc.gov/api/views/bi63-dtpu/rows.json?accessType=DOWNLOAD',
-                    label: 'NCHS - Leading Causes of Death: United States',
-                    storeName: 'store-causes-death',
-                    sortDefinition: [
-                        {
-                            name: "sortByYearThenStateThenCauseName",
-                            sortFields: [
-                                {
-                                    sortColumn: "Year",
-                                    path: "Year",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "State",
-                                    path: "State",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "CauseName",
-                                    path: "CauseName",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByAgeAdjustedDeathRateThenDeaths",
-                            sortFields: [
-                                {
-                                    sortColumn: "Age-adjustedDeathRate",
-                                    path: "Age-adjustedDeathRate",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Deaths",
-                                    path: "Deaths",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                babyNames: {
-                    url: 'https://data.cityofnewyork.us/api/views/25th-nujf/rows.json?accessType=DOWNLOAD',
-                    label: 'Popular Baby Names',
-                    storeName: 'store-baby-names',
-                    sortDefinition: [
-                        {
-                            name: "sortByYearGenderEthnicity",
-                            sortFields: [
-                                {
-                                    sortColumn: "YearofBirth",
-                                    path: "YearofBirth",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Gender",
-                                    path: "Gender",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Ethnicity",
-                                    path: "Ethnicity",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByRankCountName",
-                            sortFields: [
-                                {
-                                    sortColumn: "Rank",
-                                    path: "Rank",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Count",
-                                    path: "Count",
-                                    sortDirection: "Desc"
-                                },
-                                {
-                                    sortColumn: "Child'sFirstName",
-                                    path: "Child'sFirstName",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                youthTobacco: {
-                    url: 'https://data.cdc.gov/api/views/4juz-x2tp/rows.json?accessType=DOWNLOAD',
-                    label: 'Youth Tobacco Survey (YTS) Data',
-                    storeName: 'store-youth-tobacco',
-                    sortDefinition: [
-                        {
-                            name: "sortByYearLocation",
-                            sortFields: [
-                                {
-                                    sortColumn: "YEAR",
-                                    path: "YEAR",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LocationAbbr",
-                                    path: "LocationAbbr",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LocationDesc",
-                                    path: "LocationDesc",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByTopicAndMeasure",
-                            sortFields: [
-                                {
-                                    sortColumn: "TopicType",
-                                    path: "TopicType",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "TopicDesc",
-                                    path: "TopicDesc",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "MeasureDesc",
-                                    path: "MeasureDesc",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDataValueAndConfidence",
-                            sortFields: [
-                                {
-                                    sortColumn: "Data_Value",
-                                    path: "Data_Value",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Low_Confidence_Limit",
-                                    path: "Low_Confidence_Limit",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "High_Confidence_Limit",
-                                    path: "High_Confidence_Limit",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDemographics",
-                            sortFields: [
-                                {
-                                    sortColumn: "Gender",
-                                    path: "Gender",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Race",
-                                    path: "Race",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Age",
-                                    path: "Age",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Education",
-                                    path: "Education",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByIds",
-                            sortFields: [
-                                {
-                                    sortColumn: "TopicTypeId",
-                                    path: "TopicTypeId",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "TopicId",
-                                    path: "TopicId",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "MeasureId",
-                                    path: "MeasureId",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByStratifications",
-                            sortFields: [
-                                {
-                                    sortColumn: "StratificationID1",
-                                    path: "StratificationID1",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "StratificationID2",
-                                    path: "StratificationID2",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "StratificationID3",
-                                    path: "StratificationID3",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "StratificationID4",
-                                    path: "StratificationID4",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "SubMeasureID",
-                                    path: "SubMeasureID",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortBySampleSizeThenDataValue",
-                            sortFields: [
-                                {
-                                    sortColumn: "Sample_Size",
-                                    path: "Sample_Size",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Data_Value",
-                                    path: "Data_Value",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDataSourceThenResponse",
-                            sortFields: [
-                                {
-                                    sortColumn: "DataSource",
-                                    path: "DataSource",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Response",
-                                    path: "Response",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDisplayOrderThenYear",
-                            sortFields: [
-                                {
-                                    sortColumn: "DisplayOrder",
-                                    path: "DisplayOrder",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "YEAR",
-                                    path: "YEAR",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                lapdArrests: {
-                    url: 'https://data.lacity.org/api/views/amvf-fr72/rows.json?accessType=DOWNLOAD',
-                    label: 'Arrest Data from 2020 to Present LAPD',
-                    storeName: 'store-lapd-arrests',
-                    sortDefinition: [
-                        {
-                            name: "sortByArrestDateTimeArea",
-                            sortFields: [
-                                {
-                                    sortColumn: "ArrestDate",
-                                    path: "ArrestDate",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Time",
-                                    path: "Time",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "AreaID",
-                                    path: "AreaID",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "AreaName",
-                                    path: "AreaName",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByReportTypeAndID",
-                            sortFields: [
-                                {
-                                    sortColumn: "ReportType",
-                                    path: "ReportType",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "ReportID",
-                                    path: "ReportID",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByChargeHierarchy",
-                            sortFields: [
-                                {
-                                    sortColumn: "ChargeGroupCode",
-                                    path: "ChargeGroupCode",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "ChargeGroupDescription",
-                                    path: "ChargeGroupDescription",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "Charge",
-                                    path: "Charge",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "ChargeDescription",
-                                    path: "ChargeDescription",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByArrestTypeDisposition",
-                            sortFields: [
-                                {
-                                    sortColumn: "ArrestTypeCode",
-                                    path: "ArrestTypeCode",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "DispositionDescription",
-                                    path: "DispositionDescription",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDemographics",
-                            sortFields: [
-                                {
-                                    sortColumn: "Age",
-                                    path: "Age",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "SexCode",
-                                    path: "SexCode",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "DescentCode",
-                                    path: "DescentCode",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByBookingInfo",
-                            sortFields: [
-                                {
-                                    sortColumn: "BookingDate",
-                                    path: "BookingDate",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "BookingTime",
-                                    path: "BookingTime",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "BookingLocation",
-                                    path: "BookingLocation",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "BookingLocationCode",
-                                    path: "BookingLocationCode",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByLocationAndCoordinates",
-                            sortFields: [
-                                {
-                                    sortColumn: "Location",
-                                    path: "Location",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LAT",
-                                    path: "LAT",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LON",
-                                    path: "LON",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByCouncilAndNeighborhood",
-                            sortFields: [
-                                {
-                                    sortColumn: "CouncilDistricts",
-                                    path: "CouncilDistricts",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "NeighborhoodCouncils(Certified)",
-                                    path: "NeighborhoodCouncils(Certified)",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "ZipCodes",
-                                    path: "ZipCodes",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        },
-                        {
-                            name: "sortByDistrictPrecinctCensusPlans",
-                            sortFields: [
-                                {
-                                    sortColumn: "ReportingDistrict",
-                                    path: "ReportingDistrict",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "PrecinctBoundaries",
-                                    path: "PrecinctBoundaries",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "CensusTracts",
-                                    path: "CensusTracts",
-                                    sortDirection: "Asc"
-                                },
-                                {
-                                    sortColumn: "LASpecificPlans",
-                                    path: "LASpecificPlans",
-                                    sortDirection: "Asc"
-                                }
-                            ]
-                        }
-                    ]
-                }
+                powerballNumbers: {url: 'https://data.ny.gov/api/views/d6yy-54nr/rows.json?accessType=DOWNLOAD', label: 'Lottery Powerball Winning Numbers: Beginning 2010', storeName: 'store-lottery',
+                    sortDefinition: [{name: 'sortByDrawDate', sortFields: [
+                                { sortColumn: 'DrawDate', path: 'DrawDate', sortDirection: 'Asc' }]},
+                        {name: 'sortByWinningNumbers', sortFields: [
+                                { sortColumn: 'WinningNumbers', path: 'WinningNumbers', sortDirection: 'Asc' }]},
+                        {name: 'sortByMultiplier', sortFields: [
+                                { sortColumn: 'Multiplier', path: 'Multiplier', sortDirection: 'Asc' }]}]},
+
+                mentalHealthCare: {url: 'https://data.cdc.gov/api/views/yni7-er2q/rows.json?accessType=DOWNLOAD', label: 'Mental Health Care in the Last 4 Weeks', storeName: 'store-mental-health',
+                    sortDefinition: [{name: 'sortByIndicator', sortFields: [
+                                { sortColumn: 'Indicator', path: 'Indicator', sortDirection: 'Asc' }]},
+                        {name: 'sortByState', sortFields: [
+                                { sortColumn: 'State', path: 'State', sortDirection: 'Asc' }]},
+                        {name: 'sortByTimePeriodStartDate', sortFields: [
+                                { sortColumn: 'TimePeriodStartDate', path: 'TimePeriodStartDate', sortDirection: 'Asc' }]},
+                        {name: 'sortByValue', sortFields: [
+                                { sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' }]}]},
+
+                anxietyDepressionIndicators: {url: 'https://data.cdc.gov/api/views/8pt5-q6wp/rows.json?accessType=DOWNLOAD', label: 'Indicators of Anxiety or Depression Based on Reported Frequency of Symptoms', storeName: 'store-anxiety-depression',
+                    sortDefinition: [{name: 'sortByIndicatorThenGroupThenSubgroup', sortFields: [
+                                { sortColumn: 'Indicator', path: 'Indicator', sortDirection: 'Asc' },
+                                { sortColumn: 'Group', path: 'Group', sortDirection: 'Asc' },
+                                { sortColumn: 'Subgroup', path: 'Subgroup', sortDirection: 'Asc' }]},
+                        {name: 'sortByStateThenPhaseThenTimePeriod', sortFields: [
+                                { sortColumn: 'State', path: 'State', sortDirection: 'Asc' },
+                                { sortColumn: 'Phase', path: 'Phase', sortDirection: 'Asc' },
+                                { sortColumn: 'TimePeriod', path: 'TimePeriod', sortDirection: 'Asc' }]},
+                        {name: 'sortByTimePeriodStartEndDateThenLabel', sortFields: [
+                                { sortColumn: 'TimePeriodStartDate', path: 'TimePeriodStartDate', sortDirection: 'Asc' },
+                                { sortColumn: 'TimePeriodEndDate', path: 'TimePeriodEndDate', sortDirection: 'Asc' },
+                                { sortColumn: 'TimePeriodLabel', path: 'TimePeriodLabel', sortDirection: 'Asc' }]},
+                        {name: 'sortByValueThenLowCIThenHighCI', sortFields: [
+                                { sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' },
+                                { sortColumn: 'LowCI', path: 'LowCI', sortDirection: 'Asc' },
+                                { sortColumn: 'HighCI', path: 'HighCI', sortDirection: 'Asc' }]},
+                        {name: 'sortByConfidenceIntervalThenQuartileRange', sortFields: [
+                                { sortColumn: 'ConfidenceInterval', path: 'ConfidenceInterval', sortDirection: 'Asc' },
+                                { sortColumn: 'QuartileRange', path: 'QuartileRange', sortDirection: 'Asc' }]}]},
+
+                causesOfDeath: {url: 'https://data.cdc.gov/api/views/bi63-dtpu/rows.json?accessType=DOWNLOAD', label: 'NCHS - Leading Causes of Death: United States', storeName: 'store-causes-death',
+                    sortDefinition: [{name: 'sortByYearThenStateThenCauseName', sortFields: [
+                                { sortColumn: 'Year', path: 'Year', sortDirection: 'Asc' },
+                                { sortColumn: 'State', path: 'State', sortDirection: 'Asc' },
+                                { sortColumn: 'CauseName', path: 'CauseName', sortDirection: 'Asc' }]},
+                        {name: 'sortByAgeAdjustedDeathRateThenDeaths', sortFields: [
+                                { sortColumn: 'Age-adjustedDeathRate', path: 'Age-adjustedDeathRate', sortDirection: 'Asc' },
+                                { sortColumn: 'Deaths', path: 'Deaths', sortDirection: 'Asc' }]}]},
+
+                babyNames: {url: 'https://data.cityofnewyork.us/api/views/25th-nujf/rows.json?accessType=DOWNLOAD', label: 'Popular Baby Names', storeName: 'store-baby-names',
+                    sortDefinition: [{name: 'sortByYearGenderEthnicity', sortFields: [
+                                { sortColumn: 'YearofBirth', path: 'YearofBirth', sortDirection: 'Asc' },
+                                { sortColumn: 'Gender', path: 'Gender', sortDirection: 'Asc' },
+                                { sortColumn: 'Ethnicity', path: 'Ethnicity', sortDirection: 'Asc' }]},
+                        {name: 'sortByRankCountName', sortFields: [
+                                { sortColumn: 'Rank', path: 'Rank', sortDirection: 'Asc' },
+                                { sortColumn: 'Count', path: 'Count', sortDirection: 'Desc' },
+                                { sortColumn: "Child'sFirstName", path: "Child'sFirstName", sortDirection: 'Asc' }]}]},
+
+                youthTobacco: {url: 'https://data.cdc.gov/api/views/4juz-x2tp/rows.json?accessType=DOWNLOAD', label: 'Youth Tobacco Survey (YTS) Data', storeName: 'store-youth-tobacco',
+                    sortDefinition: [{name: 'sortByYearLocation', sortFields: [
+                                { sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' },
+                                { sortColumn: 'LocationAbbr', path: 'LocationAbbr', sortDirection: 'Asc' },
+                                { sortColumn: 'LocationDesc', path: 'LocationDesc', sortDirection: 'Asc' }]},
+                        {name: 'sortByTopicAndMeasure', sortFields: [
+                                { sortColumn: 'TopicType', path: 'TopicType', sortDirection: 'Asc' },
+                                { sortColumn: 'TopicDesc', path: 'TopicDesc', sortDirection: 'Asc' },
+                                { sortColumn: 'MeasureDesc', path: 'MeasureDesc', sortDirection: 'Asc' }]},
+                        {name: 'sortByDataValueAndConfidence', sortFields: [
+                                { sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' },
+                                { sortColumn: 'Low_Confidence_Limit', path: 'Low_Confidence_Limit', sortDirection: 'Asc' },
+                                { sortColumn: 'High_Confidence_Limit', path: 'High_Confidence_Limit', sortDirection: 'Asc' }]},
+                        {name: 'sortByDemographics', sortFields: [
+                                { sortColumn: 'Gender', path: 'Gender', sortDirection: 'Asc' },
+                                { sortColumn: 'Race', path: 'Race', sortDirection: 'Asc' },
+                                { sortColumn: 'Age', path: 'Age', sortDirection: 'Asc' },
+                                { sortColumn: 'Education', path: 'Education', sortDirection: 'Asc' }]},
+                        {name: 'sortByIds', sortFields: [
+                                { sortColumn: 'TopicTypeId', path: 'TopicTypeId', sortDirection: 'Asc' },
+                                { sortColumn: 'TopicId', path: 'TopicId', sortDirection: 'Asc' },
+                                { sortColumn: 'MeasureId', path: 'MeasureId', sortDirection: 'Asc' }]},
+                        {name: 'sortByStratifications', sortFields: [
+                                { sortColumn: 'StratificationID1', path: 'StratificationID1', sortDirection: 'Asc' },
+                                { sortColumn: 'StratificationID2', path: 'StratificationID2', sortDirection: 'Asc' },
+                                { sortColumn: 'StratificationID3', path: 'StratificationID3', sortDirection: 'Asc' },
+                                { sortColumn: 'StratificationID4', path: 'StratificationID4', sortDirection: 'Asc' },
+                                { sortColumn: 'SubMeasureID', path: 'SubMeasureID', sortDirection: 'Asc' }]},
+                        {name: 'sortBySampleSizeThenDataValue', sortFields: [
+                                { sortColumn: 'Sample_Size', path: 'Sample_Size', sortDirection: 'Asc' },
+                                { sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' }]},
+                        {name: 'sortByDataSourceThenResponse', sortFields: [
+                                { sortColumn: 'DataSource', path: 'DataSource', sortDirection: 'Asc' },
+                                { sortColumn: 'Response', path: 'Response', sortDirection: 'Asc' }]},
+                        {name: 'sortByDisplayOrderThenYear', sortFields: [
+                                { sortColumn: 'DisplayOrder', path: 'DisplayOrder', sortDirection: 'Asc' },
+                                { sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' }]}]},
+
+                lapdArrests: {url: 'https://data.lacity.org/api/views/amvf-fr72/rows.json?accessType=DOWNLOAD', label: 'Arrest Data from 2020 to Present LAPD', storeName: 'store-lapd-arrests',
+                    sortDefinition: [{name: 'sortByArrestDateTimeArea', sortFields: [
+                                { sortColumn: 'ArrestDate', path: 'ArrestDate', sortDirection: 'Asc' },
+                                { sortColumn: 'Time', path: 'Time', sortDirection: 'Asc' },
+                                { sortColumn: 'AreaID', path: 'AreaID', sortDirection: 'Asc' },
+                                { sortColumn: 'AreaName', path: 'AreaName', sortDirection: 'Asc' }]},
+                        {name: 'sortByReportTypeAndID', sortFields: [
+                                { sortColumn: 'ReportType', path: 'ReportType', sortDirection: 'Asc' },
+                                { sortColumn: 'ReportID', path: 'ReportID', sortDirection: 'Asc' }]},
+                        {name: 'sortByChargeHierarchy', sortFields: [
+                                { sortColumn: 'ChargeGroupCode', path: 'ChargeGroupCode', sortDirection: 'Asc' },
+                                { sortColumn: 'ChargeGroupDescription', path: 'ChargeGroupDescription', sortDirection: 'Asc' },
+                                { sortColumn: 'Charge', path: 'Charge', sortDirection: 'Asc' },
+                                { sortColumn: 'ChargeDescription', path: 'ChargeDescription', sortDirection: 'Asc' }]},
+                        {name: 'sortByArrestTypeDisposition', sortFields: [
+                                { sortColumn: 'ArrestTypeCode', path: 'ArrestTypeCode', sortDirection: 'Asc' },
+                                { sortColumn: 'DispositionDescription', path: 'DispositionDescription', sortDirection: 'Asc' }]},
+                        {name: 'sortByDemographics', sortFields: [
+                                { sortColumn: 'Age', path: 'Age', sortDirection: 'Asc' },
+                                { sortColumn: 'SexCode', path: 'SexCode', sortDirection: 'Asc' },
+                                { sortColumn: 'DescentCode', path: 'DescentCode', sortDirection: 'Asc' }]},
+                        {name: 'sortByBookingInfo', sortFields: [
+                                { sortColumn: 'BookingDate', path: 'BookingDate', sortDirection: 'Asc' },
+                                { sortColumn: 'BookingTime', path: 'BookingTime', sortDirection: 'Asc' },
+                                { sortColumn: 'BookingLocation', path: 'BookingLocation', sortDirection: 'Asc' },
+                                { sortColumn: 'BookingLocationCode', path: 'BookingLocationCode', sortDirection: 'Asc' }]},
+                        {name: 'sortByLocationAndCoordinates', sortFields: [
+                                { sortColumn: 'Location', path: 'Location', sortDirection: 'Asc' },
+                                { sortColumn: 'LAT', path: 'LAT', sortDirection: 'Asc' },
+                                { sortColumn: 'LON', path: 'LON', sortDirection: 'Asc' }]},
+                        {name: 'sortByCouncilAndNeighborhood', sortFields: [
+                                { sortColumn: 'CouncilDistricts', path: 'CouncilDistricts', sortDirection: 'Asc' },
+                                { sortColumn: 'NeighborhoodCouncils(Certified)', path: 'NeighborhoodCouncils(Certified)', sortDirection: 'Asc' },
+                                { sortColumn: 'ZipCodes', path: 'ZipCodes', sortDirection: 'Asc' }]},
+                        {name: 'sortByDistrictPrecinctCensusPlans', sortFields: [
+                                { sortColumn: 'ReportingDistrict', path: 'ReportingDistrict', sortDirection: 'Asc' },
+                                { sortColumn: 'PrecinctBoundaries', path: 'PrecinctBoundaries', sortDirection: 'Asc' },
+                                { sortColumn: 'CensusTracts', path: 'CensusTracts', sortDirection: 'Asc' },
+                                { sortColumn: 'LASpecificPlans', path: 'LASpecificPlans', sortDirection: 'Asc' }]}]}
             };
 
             // Make sure we have a matching config
@@ -2820,6 +2296,8 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         aKeys.push(jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`);
                         await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
                     }
+
+                    await videoDB.confirmJsonOffsets(storeName);
 
                     logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}".`);
                 } else {
