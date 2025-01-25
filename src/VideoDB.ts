@@ -184,7 +184,7 @@ export class VideoDB {
             ? this.getJsonFieldOffsetsFlattened(value, storeMeta.sortDefinition)
             : null;
 
-        if (Math.random() < 0.0005) { // 0.05% chance
+        if (fieldOffsets && Math.random() < 0.0005) {
             console.log('value: ', value);
             console.log('field offsets: ', fieldOffsets);
             // Each field has 2 slots [start, end]
