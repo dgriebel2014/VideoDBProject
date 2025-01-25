@@ -158,7 +158,7 @@ export class VideoDB {
      *
      * @remarks
      * - The new data is added to a batch (`pendingWrites`) and won’t be written to GPU memory until
-     *   either there is a 1-second pause in writes or the batch size threshold is reached.
+     *   either there is a 250-ms pause in writes or the batch size threshold is reached.
      * - If `storeName` is configured with `sortDefinition`, a `<storeName>-offsets` store is
      *   automatically created. This method will compute JSON field offsets and queue them
      *   for writing to the offset store simultaneously.
@@ -364,11 +364,55 @@ export class VideoDB {
     }
 
     /**
-     * Overloaded getMultiple method.
+     * Retrieves multiple records from the specified store, supporting two different usage patterns:
      *
-     * @param storeName - The target store name.
-     * @param keys - The array of keys to fetch.
-     * @returns An array of deserialized data.
+     * 1. **Fetch by an array of keys**:
+     *    ```ts
+     *    const results = await videoDB.getMultiple("MyStore", ["key1", "key2", "key3"]);
+     *    ```
+     *    - Returns a Promise resolving to an array of the same length as the input `keys`.
+     *    - Each position corresponds to the deserialized data for that key, or `null` if the key does not exist.
+     *    - Keys can also include wildcard patterns (e.g., `%`, `_`, or bracket expressions) which will be expanded to match multiple existing keys.
+     *
+     * 2. **Paginated fetch**:
+     *    ```ts
+     *    const results = await videoDB.getMultiple("MyStore", 0, 100);
+     *    ```
+     *    - Interprets the second parameter as `skip` and the third parameter as `take`.
+     *    - Internally retrieves all keys from the store, then returns a slice of that array starting at index `skip` and spanning `take` entries.
+     *    - The returned array contains data in the store’s internal keyMap order (not necessarily sorted by key).
+     *
+     * @param {string} storeName
+     *   The name of the target store from which to retrieve data.
+     *
+     * @param {string[] | number} param2
+     *   - If this is an array of `string`s, the method treats it as a list of specific keys (including possible wildcards) to fetch.
+     *   - If this is a `number`, the method interprets it as the `skip` value for pagination.
+     *
+     * @param {number} [param3]
+     *   - If `param2` is a number, then this parameter is the `take` value for pagination.
+     *   - Ignored if `param2` is an array of keys.
+     *
+     * @returns {Promise<(any|null)[]>}
+     *   A promise that resolves to an array of results. Each result is either the deserialized object/typed-array/ArrayBuffer from the GPU or `null` if the record does not exist.
+     *   - In “fetch by keys” mode, the array matches the order of your provided keys.
+     *   - In “paginated fetch” mode, the array contains results in the order of the store’s keyMap from `skip` to `skip + take - 1`.
+     *
+     * @throws {Error}
+     *   - If invalid parameters are provided (neither an array of keys nor valid `skip`/`take`).
+     *
+     * @example
+     * // 1) Fetch by specific keys
+     * const recordsByKey = await videoDB.getMultiple("MyStore", ["key1", "key2"]);
+     *
+     * @example
+     * // 2) Fetch by pagination
+     * const firstHundredRecords = await videoDB.getMultiple("MyStore", 0, 100);
+     *
+     * @remarks
+     * - All pending writes are flushed before reading to ensure consistency.
+     * - If keys are expanded from wildcards, the results array may be larger than the original keys array.
+     * - The order of results in paginated mode depends on iteration order of the store’s internal keyMap, which is not necessarily sorted.
      */
     public async getMultiple(storeName: string, keys: string[]): Promise<(any | null)[]>;
     public async getMultiple(storeName: string, skip: number, take: number): Promise<(any | null)[]>;
