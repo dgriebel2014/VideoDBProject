@@ -66,12 +66,14 @@ export type RowInfo = {
 export interface SortDefinition {
     name: string;
     sortFields: {
+        dataType: "string" | "number" | "date";
         sortColumn: string;
         path: string;
         sortDirection: "Asc" | "Desc";
     }[];
 }
 export interface SortField {
+    dataType: "string" | "number" | "date";
     sortColumn: string;
     path: string;
     sortDirection: "Asc" | "Desc";

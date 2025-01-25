@@ -84,12 +84,9 @@ export class VideoDB {
             );
         }
 
-        let rowsPerBuffer: number | undefined;
-
-        // If it's not JSON and rowSize was specified, compute how many rows fit into bufferSize
-        if (options.dataType !== "JSON" && options.rowSize) {
-            rowsPerBuffer = Math.floor(options.bufferSize / options.rowSize);
-        }
+        const rowsPerBuffer = options.dataType !== "JSON" && options.rowSize
+            ? Math.floor(options.bufferSize / options.rowSize)
+            : undefined;
 
         const storeMetadata: StoreMetadata = {
             storeName,
@@ -101,17 +98,23 @@ export class VideoDB {
             totalRows: options.totalRows,
             buffers: [],
             rows: [],
-
-            // Assign sort definitions if provided
-            sortDefinition: options.sortDefinition ?? []
+            sortDefinition: options.sortDefinition?.map(def => ({
+                name: def.name,
+                sortFields: def.sortFields.map(field => ({
+                    dataType: "string", // Default to "string", update as needed
+                    ...field
+                }))
+            })) ?? []
         };
 
         this.storeMetadataMap.set(storeName, storeMetadata);
         this.storeKeyMap.set(storeName, new Map());
 
         if (options.dataType === "JSON" && options.sortDefinition && options.sortDefinition.length) {
-            const totalSortFields = options.sortDefinition
-                .reduce((count, def) => count + def.sortFields.length, 0);
+            const totalSortFields = options.sortDefinition.reduce(
+                (count, def) => count + def.sortFields.length,
+                0
+            );
             const bytesPerField = 2 * 4;
             const rowSize = totalSortFields * bytesPerField;
 
@@ -120,7 +123,7 @@ export class VideoDB {
                 typedArrayType: "Uint32Array",
                 bufferSize: 10 * 1024 * 1024,
                 totalRows: options.totalRows,
-                rowSize: rowSize
+                rowSize
             });
         }
     }
@@ -1731,50 +1734,6 @@ export class VideoDB {
     }
 
     /**
-     * Combines multiple sort definitions into one by concatenating their `sortFields`.
-     *
-     * @private
-     * @param {SortDefinition[]} definitions - An array of sort definitions to combine.
-     * @returns {SortDefinition} A single sort definition containing all fields.
-     */
-    private combineSortDefinitions(definitions: SortDefinition[]): SortDefinition {
-        const combined: SortDefinition = { name: "combined", sortFields: [] };
-        for (const def of definitions) {
-            if (!def || !Array.isArray(def.sortFields)) {
-                console.warn("A sort definition is missing 'sortFields':", def);
-                continue;
-            }
-            for (const field of def.sortFields) {
-                combined.sortFields.push({
-                    sortColumn: field.sortColumn,
-                    path: field.path,
-                    sortDirection: field.sortDirection,
-                });
-            }
-        }
-        return combined;
-    }
-
-    /**
-     * Builds a mapping from each path (e.g. "user.name") to an array of indices in the final offset array.
-     * If a path appears in multiple sort fields, all relevant indices are collected.
-     *
-     * @private
-     * @param {SortDefinition} sortDefinition - The combined sort definition containing multiple fields.
-     * @returns {Record<string, number[]>} An object whose keys are paths and values are arrays of field indices.
-     */
-    private buildPathIndexMap(sortDefinition: SortDefinition) {
-        const map: Record<string, number[]> = {};
-        sortDefinition.sortFields.forEach((field, i) => {
-            if (!map[field.path]) {
-                map[field.path] = [];
-            }
-            map[field.path].push(i);
-        });
-        return map;
-    }
-
-    /**
      * Recursively measures how many characters a value would occupy in JSON,
      * without building the full JSON string. Updates `offsets` if `currentPath`
      * matches any field in `pathIndexMap`.
@@ -1924,27 +1883,6 @@ export class VideoDB {
     }
 
     /**
-     * For one object, computes offsets for all fields in the given sort definition(s) and
-     * stores them in a `finalOffsets` array (two indices per field: start and end).
-     *
-     * @private
-     * @param {any} obj - The JavaScript object for which to compute field offsets.
-     * @param {SortDefinition} sortDefinition - A combined sort definition containing multiple fields.
-     * @param {Uint32Array} finalOffsets - A 2*N array of offset ranges, where N is number of fields.
-     * @returns {void}
-     */
-    private computeOffsetsSingleObject(
-        obj: any,
-        sortDefinition: SortDefinition,
-        finalOffsets: Uint32Array
-    ): void {
-        const pathIndexMap = this.buildPathIndexMap(sortDefinition);
-
-        // There's only one object, so offsetBaseIndex always starts at 0
-        this.measureValueWithOffsets(obj, "", pathIndexMap, finalOffsets, 0, 0);
-    }
-
-    /**
      * Computes a single flat `Uint32Array` of offsets for one object,
      * across all fields in one or more sort definitions (two offsets per field).
      *
@@ -1975,122 +1913,69 @@ export class VideoDB {
     }
 
     /**
-     * Confirms that the offset data in "<storeName>-offsets" actually points
-     * to the correct substring locations inside the JSON data in "storeName".
+     * Combines multiple sort definitions into one by concatenating their `sortFields`.
      *
-     * For each key:
-     *   1) Reads the JSON data from the main store (storeName).
-     *   2) Reads the offset array from the offsets store ("<storeName>-offsets").
-     *   3) Uses the combined sortDefinition from the main store to interpret each pair of [start, end] offsets.
-     *   4) Extracts that substring from the JSON string and prints a console.log message so you can visually verify.
-     *
-     * @param storeName The name of the JSON store (e.g. "Videos"). 
-     *                  The offsets store is assumed to be storeName + "-offsets".
-     * @param maxKeys   An optional limit on how many keys to verify (to avoid huge console spam).
+     * @private
+     * @param {SortDefinition[]} definitions - An array of sort definitions to combine.
+     * @returns {SortDefinition} A single sort definition containing all fields.
      */
-    public async confirmJsonOffsets(storeName: string, maxKeys: number = 25): Promise<void> {
-        // Retrieve the metadata for the main JSON store
-        const storeMeta = this.storeMetadataMap.get(storeName);
-        if (!storeMeta) {
-            console.warn(`Store "${storeName}" not found. Aborting offset check.`);
-            return;
-        }
-        if (storeMeta.dataType !== "JSON" || !storeMeta.sortDefinition?.length) {
-            console.warn(
-                `Store "${storeName}" does not appear to be JSON or doesn't have any sortDefinition. Aborting offset check.`
-            );
-            return;
-        }
-
-        // Retrieve the associated offsets store metadata
-        const offsetsStoreName = `${storeName}-offsets`;
-        const offsetsMeta = this.storeMetadataMap.get(offsetsStoreName);
-        if (!offsetsMeta) {
-            console.warn(
-                `Offsets store "${offsetsStoreName}" not found. Make sure you createdObjectStore(...) with a sortDefinition.`
-            );
-            return;
-        }
-
-        // Combine the sortDefinitions so we know the order in which fields appear.
-        const combinedSortDefinition = this.combineSortDefinitions(storeMeta.sortDefinition);
-        const totalFields = combinedSortDefinition.sortFields.length;
-        if (totalFields === 0) {
-            console.warn(
-                `No sort fields found in ${storeName} sortDefinition. Nothing to verify.`
-            );
-            return;
-        }
-
-        // Get all keys from the main store’s keyMap, so we can read them
-        const keyMap = this.storeKeyMap.get(storeName);
-        if (!keyMap) {
-            console.warn(`No keyMap found for store "${storeName}". Aborting offset check.`);
-            return;
-        }
-        const allKeys = Array.from(keyMap.keys());
-
-        // Optional: limit how many we check
-        const keysToCheck = allKeys.slice(0, maxKeys);
-
-        console.log(`\n---- Validating JSON Offsets for store "${storeName}" ----`);
-        console.log(
-            `Checking up to ${keysToCheck.length} key(s) (out of ${allKeys.length}) and verifying each field offset.\n`
-        );
-
-        // Fetch the main JSON data and offset data for these keys
-        const mainRecords = await this.getMultiple(storeName, keysToCheck);
-        const offsetRecords = await this.getMultiple(offsetsStoreName, keysToCheck);
-
-        // For each key, parse the JSON, then verify the offset pairs
-        for (let i = 0; i < keysToCheck.length; i++) {
-            const key = keysToCheck[i];
-            const jsonObject = mainRecords[i];
-            const offsetArray = offsetRecords[i] as ArrayBuffer | null;
-            // (If your offsets store is definitely typed as "Uint32Array", then this is an ArrayBuffer.)
-            // If offsetArray == null, that means no offsets found for this key.
-
-            if (jsonObject == null || offsetArray == null) {
-                console.warn(
-                    `[${storeName}] Key="${key}" => either main record or offset record is null. Skipping.`
-                );
+    private combineSortDefinitions(definitions: SortDefinition[]): SortDefinition {
+        const combined: SortDefinition = { name: "combined", sortFields: [] };
+        for (const def of definitions) {
+            if (!def || !Array.isArray(def.sortFields)) {
+                console.warn("A sort definition is missing 'sortFields':", def);
                 continue;
             }
-
-            // Convert the offset data to a Uint32Array
-            const offsets = new Uint32Array(offsetArray);
-
-            // Re-serialize the JSON object the same way we do when writing
-            // (minus the trailing spaces that pad to multiple-of-4 bytes).
-            let jsonStr = JSON.stringify(jsonObject);
-
-            // For each field in the combined sort definition, pick up the [startOffset, endOffset] pair
-            // from `offsets`.
-            console.log(`\nKey="${key}" => verifying ${totalFields} field offsets:`);
-            for (let fieldIndex = 0; fieldIndex < totalFields; fieldIndex++) {
-                // Each field has 2 slots in offsets: 
-                // [startOffset, endOffset]
-                const start = offsets[fieldIndex * 2];
-                const end = offsets[fieldIndex * 2 + 1];
-                const fieldInfo = combinedSortDefinition.sortFields[fieldIndex];
-
-                // Safeguard if the offsets are out of range
-                if (end > jsonStr.length || start > end) {
-                    console.warn(
-                        `   - Field #${fieldIndex} path="${fieldInfo.path}" has out-of-range offsets [${start},${end}] for JSON length=${jsonStr.length}.`
-                    );
-                    continue;
-                }
-
-                // Grab the actual substring from the JSON
-                const substring = jsonStr.substring(start, end);
-                console.log(
-                    `   - Field #${fieldIndex}: path="${fieldInfo.path}", offsetRange=[${start},${end}), substring="${substring}"`
-                );
+            for (const field of def.sortFields) {
+                combined.sortFields.push({
+                    dataType: field.dataType,
+                    sortColumn: field.sortColumn,
+                    path: field.path,
+                    sortDirection: field.sortDirection
+                });
             }
         }
+        return combined;
+    }
 
-        console.log(`\n---- Finished offset validation for store "${storeName}" ----\n`);
+    /**
+     * For one object, computes offsets for all fields in the given sort definition(s) and
+     * stores them in a `finalOffsets` array (two indices per field: start and end).
+     *
+     * @private
+     * @param {any} obj - The JavaScript object for which to compute field offsets.
+     * @param {SortDefinition} sortDefinition - A combined sort definition containing multiple fields.
+     * @param {Uint32Array} finalOffsets - A 2*N array of offset ranges, where N is number of fields.
+     * @returns {void}
+     */
+    private computeOffsetsSingleObject(
+        obj: any,
+        sortDefinition: SortDefinition,
+        finalOffsets: Uint32Array
+    ): void {
+        const pathIndexMap = this.buildPathIndexMap(sortDefinition);
+
+        // There's only one object, so offsetBaseIndex always starts at 0
+        this.measureValueWithOffsets(obj, "", pathIndexMap, finalOffsets, 0, 0);
+    }
+
+    /**
+     * Builds a mapping from each path (e.g. "user.name") to an array of indices in the final offset array.
+     * If a path appears in multiple sort fields, all relevant indices are collected.
+     *
+     * @private
+     * @param {SortDefinition} sortDefinition - The combined sort definition containing multiple fields.
+     * @returns {Record<string, number[]>} An object whose keys are paths and values are arrays of field indices.
+     */
+    private buildPathIndexMap(sortDefinition: SortDefinition) {
+        const map: Record<string, number[]> = {};
+        sortDefinition.sortFields.forEach((field, i) => {
+            if (!map[field.path]) {
+                map[field.path] = [];
+            }
+            map[field.path].push(i);
+        });
+        return map;
     }
 }
 
