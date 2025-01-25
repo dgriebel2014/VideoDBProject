@@ -2297,8 +2297,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
                     }
 
-                    await videoDB.confirmJsonOffsets(storeName);
-
                     logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}".`);
                 } else {
                     logToConsole(`[SUCCESS] Viewing records in "${storeName}".`);

@@ -144,6 +144,19 @@ export class VideoDB {
         const fieldOffsets = (storeMeta.dataType === "JSON" && storeMeta.sortDefinition?.length)
             ? this.getJsonFieldOffsetsFlattened(value, storeMeta.sortDefinition)
             : null;
+        if (Math.random() < 0.0005) { // 0.05% chance
+            console.log('value: ', value);
+            console.log('field offsets: ', fieldOffsets);
+            // Each field has 2 slots [start, end]
+            for (let fieldIndex = 0; fieldIndex < fieldOffsets.length / 2; fieldIndex++) {
+                const start = fieldOffsets[fieldIndex * 2];
+                const end = fieldOffsets[fieldIndex * 2 + 1];
+                let jsonString = JSON.stringify(value);
+                jsonString = padJsonTo4Bytes(jsonString);
+                const substring = jsonString.substring(start, end);
+                console.log(`   - Field #${fieldIndex}: offsets=[${start},${end}), substring="${substring}"`);
+            }
+        }
         // findOrCreateRowMetadata for the main store
         const rowMetadata = await this.findOrCreateRowMetadata(storeMeta, keyMap, key, arrayBuffer, "add");
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
