@@ -1,6 +1,4 @@
 // types/StoreMetadata.ts
-// types/StoreMetadata.ts
-// types/StoreMetadata.ts
 export interface StoreMetadata {
     storeName: string;
     dataType: "TypedArray" | "ArrayBuffer" | "JSON";
