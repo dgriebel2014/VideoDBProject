@@ -95,3 +95,8 @@ export interface PendingWrite {
     key?: string; // Required for 'delete' operations
 }
 
+export interface RowIdPaddingResult {
+    paddedRowIds: Uint32Array;
+    rowCount: number;
+    paddedCount: number;
+}
