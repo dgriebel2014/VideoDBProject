@@ -2114,7 +2114,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByMultiplier', sortFields: [
-                            { dataType: 'number', sortColumn: 'Multiplier', path: 'Multiplier', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Multiplier', path: 'Multiplier', sortDirection: 'Asc' }]
                     }]
                 },
 
@@ -2134,7 +2134,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByValue', sortFields: [
-                            { dataType: 'number', sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' }]
                     }]
                 },
 
@@ -2149,8 +2149,8 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     {
                         name: 'sortByStateThenPhaseThenTimePeriod', sortFields: [
                             { dataType: 'string', sortColumn: 'State', path: 'State', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Phase', path: 'Phase', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'TimePeriod', path: 'TimePeriod', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Phase', path: 'Phase', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'TimePeriod', path: 'TimePeriod', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByTimePeriodStartEndDateThenLabel', sortFields: [
@@ -2160,14 +2160,14 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByValueThenLowCIThenHighCI', sortFields: [
-                            { dataType: 'number', sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'LowCI', path: 'LowCI', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'HighCI', path: 'HighCI', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Value', path: 'Value', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'LowCI', path: 'LowCI', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'HighCI', path: 'HighCI', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByConfidenceIntervalThenQuartileRange', sortFields: [
-                            { dataType: 'number', sortColumn: 'ConfidenceInterval', path: 'ConfidenceInterval', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'QuartileRange', path: 'QuartileRange', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'ConfidenceInterval', path: 'ConfidenceInterval', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'QuartileRange', path: 'QuartileRange', sortDirection: 'Asc' }]
                     }]
                 },
 
@@ -2175,14 +2175,14 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     url: 'https://data.cdc.gov/api/views/bi63-dtpu/rows.json?accessType=DOWNLOAD', label: 'NCHS - Leading Causes of Death: United States', storeName: 'store-causes-death',
                     sortDefinition: [{
                         name: 'sortByYearThenStateThenCauseName', sortFields: [
-                            { dataType: 'number', sortColumn: 'Year', path: 'Year', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Year', path: 'Year', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'State', path: 'State', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'CauseName', path: 'CauseName', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByAgeAdjustedDeathRateThenDeaths', sortFields: [
-                            { dataType: 'number', sortColumn: 'Age-adjustedDeathRate', path: 'Age-adjustedDeathRate', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Deaths', path: 'Deaths', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Age-adjustedDeathRate', path: 'Age-adjustedDeathRate', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Deaths', path: 'Deaths', sortDirection: 'Asc' }]
                     }]
                 },
 
@@ -2190,14 +2190,14 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     url: 'https://data.cityofnewyork.us/api/views/25th-nujf/rows.json?accessType=DOWNLOAD', label: 'Popular Baby Names', storeName: 'store-baby-names',
                     sortDefinition: [{
                         name: 'sortByYearGenderEthnicity', sortFields: [
-                            { dataType: 'number', sortColumn: 'YearofBirth', path: 'YearofBirth', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'YearofBirth', path: 'YearofBirth', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'Gender', path: 'Gender', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'Ethnicity', path: 'Ethnicity', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByRankCountName', sortFields: [
-                            { dataType: 'number', sortColumn: 'Rank', path: 'Rank', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Count', path: 'Count', sortDirection: 'Desc' },
+                            { dataType: 'string', sortColumn: 'Rank', path: 'Rank', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Count', path: 'Count', sortDirection: 'Desc' },
                             { dataType: 'string', sortColumn: "Child'sFirstName", path: "Child'sFirstName", sortDirection: 'Asc' }]
                     }]
                 },
@@ -2206,7 +2206,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     url: 'https://data.cdc.gov/api/views/4juz-x2tp/rows.json?accessType=DOWNLOAD', label: 'Youth Tobacco Survey (YTS) Data', storeName: 'store-youth-tobacco',
                     sortDefinition: [{
                         name: 'sortByYearLocation', sortFields: [
-                            { dataType: 'number', sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'LocationAbbr', path: 'LocationAbbr', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'LocationDesc', path: 'LocationDesc', sortDirection: 'Asc' }]
                     },
@@ -2218,9 +2218,9 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByDataValueAndConfidence', sortFields: [
-                            { dataType: 'number', sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Low_Confidence_Limit', path: 'Low_Confidence_Limit', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'High_Confidence_Limit', path: 'High_Confidence_Limit', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Low_Confidence_Limit', path: 'Low_Confidence_Limit', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'High_Confidence_Limit', path: 'High_Confidence_Limit', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByDemographics', sortFields: [
@@ -2245,8 +2245,8 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortBySampleSizeThenDataValue', sortFields: [
-                            { dataType: 'number', sortColumn: 'Sample_Size', path: 'Sample_Size', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'Sample_Size', path: 'Sample_Size', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Data_Value', path: 'Data_Value', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByDataSourceThenResponse', sortFields: [
@@ -2255,8 +2255,8 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByDisplayOrderThenYear', sortFields: [
-                            { dataType: 'number', sortColumn: 'DisplayOrder', path: 'DisplayOrder', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'DisplayOrder', path: 'DisplayOrder', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'YEAR', path: 'YEAR', sortDirection: 'Asc' }]
                     }]
                 },
 
@@ -2265,8 +2265,8 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     sortDefinition: [{
                         name: 'sortByArrestDateTimeArea', sortFields: [
                             { dataType: 'date', sortColumn: 'ArrestDate', path: 'ArrestDate', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'Time', path: 'Time', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'AreaID', path: 'AreaID', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Time', path: 'Time', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'AreaID', path: 'AreaID', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'AreaName', path: 'AreaName', sortDirection: 'Asc' }]
                     },
                     {
@@ -2276,7 +2276,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByChargeHierarchy', sortFields: [
-                            { dataType: 'number', sortColumn: 'ChargeGroupCode', path: 'ChargeGroupCode', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'ChargeGroupCode', path: 'ChargeGroupCode', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'ChargeGroupDescription', path: 'ChargeGroupDescription', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'Charge', path: 'Charge', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'ChargeDescription', path: 'ChargeDescription', sortDirection: 'Asc' }]
@@ -2288,35 +2288,35 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     },
                     {
                         name: 'sortByDemographics', sortFields: [
-                            { dataType: 'number', sortColumn: 'Age', path: 'Age', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'Age', path: 'Age', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'SexCode', path: 'SexCode', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'DescentCode', path: 'DescentCode', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByBookingInfo', sortFields: [
                             { dataType: 'date', sortColumn: 'BookingDate', path: 'BookingDate', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'BookingTime', path: 'BookingTime', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'BookingTime', path: 'BookingTime', sortDirection: 'Asc' },
                             { dataType: 'string', sortColumn: 'BookingLocation', path: 'BookingLocation', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'BookingLocationCode', path: 'BookingLocationCode', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'BookingLocationCode', path: 'BookingLocationCode', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByLocationAndCoordinates', sortFields: [
                             { dataType: 'string', sortColumn: 'Location', path: 'Location', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'LAT', path: 'LAT', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'LON', path: 'LON', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'LAT', path: 'LAT', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'LON', path: 'LON', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByCouncilAndNeighborhood', sortFields: [
-                            { dataType: 'number', sortColumn: 'CouncilDistricts', path: 'CouncilDistricts', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'NeighborhoodCouncils(Certified)', path: 'NeighborhoodCouncils(Certified)', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'ZipCodes', path: 'ZipCodes', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'CouncilDistricts', path: 'CouncilDistricts', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'NeighborhoodCouncils(Certified)', path: 'NeighborhoodCouncils(Certified)', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'ZipCodes', path: 'ZipCodes', sortDirection: 'Asc' }]
                     },
                     {
                         name: 'sortByDistrictPrecinctCensusPlans', sortFields: [
-                            { dataType: 'number', sortColumn: 'ReportingDistrict', path: 'ReportingDistrict', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'PrecinctBoundaries', path: 'PrecinctBoundaries', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'CensusTracts', path: 'CensusTracts', sortDirection: 'Asc' },
-                            { dataType: 'number', sortColumn: 'LASpecificPlans', path: 'LASpecificPlans', sortDirection: 'Asc' }]
+                            { dataType: 'string', sortColumn: 'ReportingDistrict', path: 'ReportingDistrict', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'PrecinctBoundaries', path: 'PrecinctBoundaries', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'CensusTracts', path: 'CensusTracts', sortDirection: 'Asc' },
+                            { dataType: 'string', sortColumn: 'LASpecificPlans', path: 'LASpecificPlans', sortDirection: 'Asc' }]
                     }]
                 }
             };
