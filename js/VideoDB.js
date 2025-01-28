@@ -1329,9 +1329,8 @@ export class VideoDB {
                 return this.serializeString(value, invert);
             default:
                 // Fallback for unknown or null
-                const fallback = new Uint32Array([0]);
-                if (invert)
-                    fallback[0] = 0xFFFFFFFF;
+                const fallback = new Uint32Array(1);
+                fallback[0] = invert ? 0xFFFFFFFF : 0;
                 return fallback;
         }
     }
@@ -1389,7 +1388,9 @@ export class VideoDB {
     serializeNumber(rawValue, invert) {
         // If not a finite number => store fallback
         if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
-            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
+            const fallback = new Uint32Array(1);
+            fallback[0] = invert ? 0xFFFFFFFF : 0;
+            return fallback;
         }
         // If integer in [0, 2^32-1], store in one 32-bit word
         if (Number.isInteger(rawValue) &&
@@ -1419,7 +1420,9 @@ export class VideoDB {
     serializeString(rawValue, invert) {
         // For non-strings, return a fixed empty/inverted-empty value
         if (typeof rawValue !== "string") {
-            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
+            const fallback = new Uint32Array(1);
+            fallback[0] = invert ? 0xFFFFFFFF : 0;
+            return fallback;
         }
         // Build a cache key that distinguishes 'invert' usage.
         // For instance, prefix with "0" or "1" or any delimiter that won't conflict.
@@ -1431,17 +1434,14 @@ export class VideoDB {
             return cached;
         }
         // Not cached, so compute the codepoints:
-        const codePoints = [];
-        for (const ch of rawValue) {
-            const cp = ch.codePointAt(0); // guaranteed non-null
-            const word = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
-            codePoints.push(word);
+        const codePoints = new Uint32Array(rawValue.length);
+        for (let i = 0; i < rawValue.length; i++) {
+            const cp = rawValue.codePointAt(i); // guaranteed non-null
+            codePoints[i] = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
         }
-        // Convert to a Uint32Array once.
-        const result = Uint32Array.from(codePoints);
         // Store in cache
-        this.stringCache.set(key, result);
-        return result;
+        this.stringCache.set(key, codePoints);
+        return codePoints;
     }
     /**
      * Sorts rows for a given store and definition using a GPU bitonic approach,
