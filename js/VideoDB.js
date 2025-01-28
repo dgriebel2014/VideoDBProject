@@ -25,15 +25,21 @@ export class VideoDB {
         this.storeKeyMap = new Map();
     }
     createObjectStore(storeName, options) {
+        // 1) Check if an object store with this name already exists. If so, throw an error.
         if (this.storeMetadataMap.has(storeName)) {
             throw new Error(`Object store "${storeName}" already exists.`);
         }
+        // 2) If the data type is "TypedArray", we must have a valid typedArrayType.
         if (options.dataType === "TypedArray" && !options.typedArrayType) {
             throw new Error(`typedArrayType is required when dataType is "TypedArray".`);
         }
+        // 3) If the dataType is not "JSON" and rowSize is provided, 
+        //    calculate how many rows can fit into one buffer based on bufferSize.
+        //    Otherwise, it remains undefined.
         const rowsPerBuffer = options.dataType !== "JSON" && options.rowSize
             ? Math.floor(options.bufferSize / options.rowSize)
             : undefined;
+        // 4) Construct a StoreMetadata object that describes this new object store.
         const storeMetadata = {
             storeName,
             dataType: options.dataType,
@@ -42,8 +48,9 @@ export class VideoDB {
             rowSize: options.rowSize,
             rowsPerBuffer,
             totalRows: options.totalRows,
-            buffers: [],
-            rows: [],
+            buffers: [], // no buffers allocated yet
+            rows: [], // empty row list initially
+            // 4a) Convert each sortDefinition to an internal format, marking all field data types as "string" by default.
             sortDefinition: options.sortDefinition?.map(def => ({
                 name: def.name,
                 sortFields: def.sortFields.map(field => ({
@@ -53,18 +60,20 @@ export class VideoDB {
             })) ?? [],
             sortsDirty: false
         };
+        // 5) Save the new store metadata in the storeMetadataMap.
         this.storeMetadataMap.set(storeName, storeMetadata);
+        // 5a) Also create an empty keyMap for this storeName.
         this.storeKeyMap.set(storeName, new Map());
+        // 6) If this is a JSON-type store with one or more sort definitions, also create an "offsets" store.
         if (options.dataType === "JSON" && options.sortDefinition && options.sortDefinition.length) {
+            // 6a) Determine how many fields there are in total across all sort definitions.
             const totalSortFields = options.sortDefinition.reduce((count, def) => count + def.sortFields.length, 0);
-            const bytesPerField = 2 * 4;
-            const rowSize = totalSortFields * bytesPerField;
+            // 6c) Create the companion offsets store with typedArrayType = "Uint32Array" and a large buffer size.
             this.createObjectStore(`${storeName}-offsets`, {
                 dataType: "TypedArray",
                 typedArrayType: "Uint32Array",
                 bufferSize: 10 * 1024 * 1024,
-                totalRows: options.totalRows,
-                rowSize
+                totalRows: options.totalRows
             });
         }
     }
@@ -89,7 +98,17 @@ export class VideoDB {
     }
     /**
      * Adds a new record to the specified store, with delayed GPU writes.
-     * If the store has JSON sort definitions, also computes & stores offsets.
+     * If the store has JSON sort definitions, it also computes and stores offsets.
+     *
+     * @async
+     * @function
+     * @name add
+     * @memberof YourClassName
+     * @param {string} storeName - The name of the store to which the record should be added.
+     * @param {string} key - The key under which the record will be stored.
+     * @param {*} value - The record data to add.
+     * @returns {Promise<void>} Promise that resolves when the record has been added.
+     * @throws {Error} If the specified object store does not exist.
      */
     async add(storeName, key, value) {
         this.isReady = false;
@@ -110,7 +129,17 @@ export class VideoDB {
     }
     /**
      * Updates (or adds) a record in the specified store, with delayed GPU writes.
-     * If the store has JSON sort definitions, also computes & stores offsets.
+     * If the store has JSON sort definitions, it also computes and stores offsets.
+     *
+     * @async
+     * @function
+     * @name put
+     * @memberof YourClassName
+     * @param {string} storeName - The name of the store to which the record should be written or updated.
+     * @param {string} key - The key under which the record will be stored or updated.
+     * @param {*} value - The record data to put or update.
+     * @returns {Promise<void>} Promise that resolves when the record has been put or updated.
+     * @throws {Error} If the specified object store does not exist.
      */
     async put(storeName, key, value) {
         this.isReady = false;
@@ -262,13 +291,13 @@ export class VideoDB {
      *
      * @example
      * for await (const record of videoDB.openCursor('MyStore')) {
-     *     console.log(record.key, record.value);
+     *     console.info(record.key, record.value);
      * }
      *
      * @example
      * const range = { lowerBound: '100', upperBound: '200', lowerInclusive: true, upperInclusive: false };
      * for await (const record of videoDB.openCursor('MyStore', { range, direction: 'prev' })) {
-     *     console.log(record.key, record.value);
+     *     console.info(record.key, record.value);
      * }
      */
     async *openCursor(storeName, options) {
@@ -509,18 +538,24 @@ export class VideoDB {
         });
     }
     /**
-     * Allocates and initializes the very first buffer in the store. This method
-     * creates the buffer, sets its used bytes, updates metadata, and returns
-     * the reference to the buffer, its index, and offset (starting at 0).
+     * Allocates and initializes the very first buffer in the store.
+     * Dynamically upsizes the buffer if the needed size is bigger than storeMeta.bufferSize.
      *
      * @private
      * @param {StoreMetadata} storeMeta - The store metadata where the buffer is being created.
      * @param {number} size - The number of bytes initially needed in the new buffer.
      * @returns {{ gpuBuffer: GPUBuffer; bufferIndex: number; offset: number }}
-     *   An object containing the new GPU buffer, the assigned buffer index, and the offset at which data can be written.
+     *   An object containing the new GPU buffer, the assigned buffer index,
+     *   and the offset at which data can be written (always 0 for the first chunk).
      */
     allocateFirstBufferChunk(storeMeta, size) {
-        const gpuBuffer = this.createNewBuffer(storeMeta, storeMeta.bufferSize);
+        // Dynamically pick a capacity that can hold 'size'
+        const neededCapacity = Math.max(storeMeta.bufferSize, roundUp(size, 256));
+        const gpuBuffer = this.device.createBuffer({
+            size: neededCapacity,
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: false
+        });
         gpuBuffer._usedBytes = 0;
         storeMeta.buffers.push({
             bufferIndex: 0,
@@ -584,18 +619,24 @@ export class VideoDB {
     }
     /**
      * Allocates a new GPU buffer chunk if the last one does not have enough space.
-     * Sets the newly allocated buffer's used bytes and updates the store metadata.
+     * Dynamically upsizes the buffer if the needed size is bigger than storeMeta.bufferSize.
      *
      * @private
      * @param {StoreMetadata} storeMeta - The store metadata where the buffer is being created.
      * @param {number} size - The number of bytes needed.
      * @returns {{ gpuBuffer: GPUBuffer; bufferIndex: number; offset: number }}
-     *   An object containing the new GPU buffer, the assigned buffer index, and the offset (always 0 for new buffers).
+     *   An object containing the new GPU buffer, the assigned buffer index,
+     *   and the offset (always 0 for new buffers).
      */
     allocateNewBufferChunk(storeMeta, size) {
         const newBufferIndex = storeMeta.buffers.length;
-        const capacity = storeMeta.bufferSize;
-        const newGpuBuffer = this.createNewBuffer(storeMeta, capacity);
+        // Dynamically pick a capacity that can hold 'size'
+        const neededCapacity = Math.max(storeMeta.bufferSize, roundUp(size, 256));
+        const newGpuBuffer = this.device.createBuffer({
+            size: neededCapacity,
+            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: false
+        });
         newGpuBuffer._usedBytes = size;
         storeMeta.buffers.push({
             bufferIndex: newBufferIndex,
@@ -733,10 +774,15 @@ export class VideoDB {
     /**
      * Deserializes raw data from a GPU buffer into its original form (JSON, TypedArray, or ArrayBuffer).
      *
+     * This method ensures that if the dataType is "TypedArray", we correctly
+     * construct the typed array from the subarray’s offset and length rather
+     * than using the entire underlying buffer.
+     *
      * @private
      * @param {StoreMetadata} storeMeta - The store metadata (contains dataType, typedArrayType, etc.).
-     * @param {Uint8Array} copiedData - A Uint8Array representing the raw copied bytes.
+     * @param {Uint8Array} copiedData - A Uint8Array representing the raw copied bytes from the GPU.
      * @returns {any} The deserialized value, whose type depends on `storeMeta.dataType`.
+     * @throws {Error} If the store's dataType or typedArrayType is invalid.
      */
     deserializeData(storeMeta, copiedData) {
         switch (storeMeta.dataType) {
@@ -752,13 +798,37 @@ export class VideoDB {
                 if (typeof TypedArrayCtor !== "function") {
                     throw new Error(`Invalid typedArrayType "${storeMeta.typedArrayType}".`);
                 }
-                return new TypedArrayCtor(copiedData.buffer);
+                // Ensure we use the subarray's offset and length in elements
+                const bytesPerElement = this.getBytesPerElement(storeMeta.typedArrayType);
+                return new TypedArrayCtor(copiedData.buffer, copiedData.byteOffset, copiedData.byteLength / bytesPerElement);
             }
             case "ArrayBuffer": {
                 return copiedData.buffer;
             }
             default:
                 throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
+        }
+    }
+    /**
+     * Determines the number of bytes per element for a given typed array type name.
+     *
+     * @private
+     * @param {string} typedArrayType - The name of the typed array constructor (e.g. "Float32Array").
+     * @returns {number} The number of bytes each element in the typed array occupies.
+     * @throws {Error} If the typed array type is unsupported.
+     */
+    getBytesPerElement(typedArrayType) {
+        switch (typedArrayType) {
+            case "Float32Array":
+            case "Int32Array":
+            case "Uint32Array":
+                return 4;
+            case "Float64Array":
+                return 8;
+            case "Uint8Array":
+                return 1;
+            default:
+                throw new Error(`Unsupported typedArrayType: ${typedArrayType}`);
         }
     }
     /**
@@ -813,22 +883,29 @@ export class VideoDB {
     }
     /**
      * Rebuilds all dirty sorts across all stores that have `sortsDirty = true`.
-     * For each such store, this method calls `rebuildStoreBySortDefinition(storeName, sortDefinitionName)`
-     * for every sort definition in that store, awaiting completion in sequence.
+     * For each such store, we iterate over each `sortDefinition`.
+     *
+     * Now that we store per-row numeric data in the offsets store (for JSON),
+     * we’ll gather that numeric data into a GPU buffer for sorting.
      *
      * @private
      * @returns {Promise<void>} A promise that resolves once all dirty sorts have been rebuilt.
      */
     async rebuildAllDirtySorts() {
         for (const [storeName, storeMeta] of this.storeMetadataMap.entries()) {
-            if (storeMeta.sortsDirty) {
-                storeMeta.sortsDirty = false; // reset the flag before starting
-                if (storeMeta.sortDefinition && storeMeta.sortDefinition.length > 0) {
-                    for (const def of storeMeta.sortDefinition) {
-                        await this.rebuildStoreBySortDefinition(storeName, def.name);
-                    }
-                }
+            if (!storeMeta.sortsDirty) {
+                continue;
             }
+            storeMeta.sortsDirty = false; // Reset the dirty flag
+            // If there are no sort definitions, skip
+            if (!storeMeta.sortDefinition || storeMeta.sortDefinition.length === 0) {
+                continue;
+            }
+            // Rebuild each definition in sequence
+            // jdg jdg jdg
+            //    for (const def of storeMeta.sortDefinition) {
+            //        await this.runGpuSortForDefinition(storeMeta, def);
+            //    }
         }
     }
     /**
@@ -840,23 +917,23 @@ export class VideoDB {
      * @returns {void}
      */
     logPerformance(initialMetrics, perKeyMetrics) {
-        console.log("** Performance Metrics for getMultiple **", {
-            flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
-            metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
-            perKeyMetrics: {
-                findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
-                createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
-                copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
-                mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
-                mapBufferSubsections: {
-                    mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
-                    getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
-                    copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
-                    unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
-                },
-                deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
-            },
-        });
+        //    console.info("** Performance Metrics for getMultiple **", {
+        //        flushWrites: initialMetrics.flushWrites.toFixed(2) + "ms",
+        //        metadataRetrieval: initialMetrics.metadataRetrieval.toFixed(2) + "ms",
+        //        perKeyMetrics: {
+        //            findMetadata: perKeyMetrics.findMetadata.toFixed(2) + "ms total",
+        //            createBuffer: perKeyMetrics.createBuffer.toFixed(2) + "ms total",
+        //            copyBuffer: perKeyMetrics.copyBuffer.toFixed(2) + "ms total",
+        //            mapBuffer: perKeyMetrics.mapBuffer.toFixed(2) + "ms total",
+        //            mapBufferSubsections: {
+        //                mapAsync: perKeyMetrics.mapBufferSubsections.mapAsync.toFixed(2) + "ms total",
+        //                getMappedRange: perKeyMetrics.mapBufferSubsections.getMappedRange.toFixed(2) + "ms total",
+        //                copyToUint8Array: perKeyMetrics.mapBufferSubsections.copyToUint8Array.toFixed(2) + "ms total",
+        //                unmap: perKeyMetrics.mapBufferSubsections.unmap.toFixed(2) + "ms total",
+        //            },
+        //            deserialize: perKeyMetrics.deserialize.toFixed(2) + "ms total",
+        //        },
+        //    });
     }
     /**
      * Flushes all pending writes to the GPU and then returns the store metadata and key map.
@@ -1183,36 +1260,8 @@ export class VideoDB {
         // Read all rows based on expanded keys
         const { results, perKeyMetrics } = await this.readAllRows(storeName, storeMeta, keyMap, expandedKeys);
         // Log or accumulate performance
-        this.logPerformance(metrics, perKeyMetrics);
+        // this.logPerformance(metrics, perKeyMetrics);
         return { results, perKeyMetrics };
-    }
-    /**
-     * For one or more SortDefinition objects, compute numeric-key arrays without merging them.
-     *
-     * @param {any} objectData - The source object whose fields we want to convert.
-     * @param {SortDefinition | SortDefinition[]} sortDefinitionOrDefinitions - Either one definition or an array of them.
-     * @returns {Uint32Array | Record<string, Uint32Array>}
-     *   - If a single definition is provided, returns a single `Uint32Array`.
-     *   - If multiple definitions are provided, returns an object keyed by definition name,
-     *     with each value being its own `Uint32Array`.
-     */
-    getJsonFieldOffsetsFlattened(objectData, sortDefinitionOrDefinitions) {
-        // 1) Normalize to an array of definitions
-        const definitions = Array.isArray(sortDefinitionOrDefinitions)
-            ? sortDefinitionOrDefinitions
-            : [sortDefinitionOrDefinitions];
-        // 2) If only one definition, return a single Uint32Array
-        if (definitions.length === 1) {
-            const def = definitions[0];
-            return this.getJsonFieldOffsetsForSingleDefinition(objectData, def);
-        }
-        // 3) Otherwise, for multiple definitions, return an object keyed by definition name
-        const result = {};
-        for (const def of definitions) {
-            const offsets = this.getJsonFieldOffsetsForSingleDefinition(objectData, def);
-            result[def.name] = offsets;
-        }
-        return result;
     }
     /**
      * Computes a flat `Uint32Array` representing *serialized field values*
@@ -1348,255 +1397,285 @@ export class VideoDB {
         return Uint32Array.from(codePoints);
     }
     /**
-     * Triggers a GPU-based sort for a specific store and one named sort definition.
+     * Sorts rows for a given store and definition using a GPU bitonic approach,
+     * with a two-buffer method (staging + storage) to avoid mapping the STORAGE buffer directly.
      *
-     * @param {string} storeName - The name of the object store to be sorted.
-     * @param {string} sortDefinitionName - The name of the sort definition to apply.
-     * @returns {Promise<void>} A promise that resolves once the sort operation is complete.
-     * @throws {Error} If the store does not exist or the named sort definition is not found.
-     */
-    async rebuildStoreBySortDefinition(storeName, sortDefinitionName) {
-        // Retrieve the store metadata
-        const storeMeta = this.storeMetadataMap.get(storeName);
-        if (!storeMeta) {
-            throw new Error(`Object store "${storeName}" does not exist.`);
-        }
-        // Find the specified sort definition by name
-        const sortDef = storeMeta.sortDefinition?.find(def => def.name === sortDefinitionName);
-        if (!sortDef) {
-            throw new Error(`Sort definition "${sortDefinitionName}" not found in store "${storeName}".`);
-        }
-        // Confirm that we actually have some fields to sort by
-        if (!sortDef.sortFields || sortDef.sortFields.length === 0) {
-            // No fields defined, no need to sort
-            console.warn(`Sort definition "${sortDefinitionName}" has no fields; skipping sort.`);
-            return;
-        }
-        // Execute the GPU-based sort for this definition.
-        //    - This is a placeholder call to whatever GPU compute routine
-        //      will reorder the row ID array for the store.
-        //    - The "rowIdBuffer", "offsetBuffer", "jsonBuffer", etc. 
-        //      would get wired in here.
-        // await this.runGpuSortForDefinition(storeMeta, sortDef);
-        // Optionally, you might mark the store as "sorted" or log completion
-        storeMeta.sortsDirty = false;
-    }
-    /**
-     * Main orchestrator method. Corresponds to the old "runGpuSortForDefinition".
-     * Public so that external code can call it.
-     *
-     * @param {StoreMetadata} storeMeta - The metadata for the store being sorted.
-     * @param {SortDefinition} sortDef - A single sort definition object specifying how to sort.
-     * @returns {Promise<void>} A promise that resolves when the GPU sort is complete.
+     * @private
+     * @param {StoreMetadata} storeMeta - The store metadata being sorted.
+     * @param {SortDefinition} sortDef - One definition specifying how to sort the rows.
+     * @returns {Promise<void>} Resolves once the GPU sort is complete or aborts if over limit.
      */
     async runGpuSortForDefinition(storeMeta, sortDef) {
-        console.log("Running GPU bitonic sort (with debug) for store:", storeMeta.storeName, "with sort:", sortDef.name);
-        // 1) Prepare row IDs and pad
-        const padResult = this.prepareRowIdsForSort(storeMeta);
-        if (!padResult) {
-            // nothing to do
+        const offsetsStoreName = `${storeMeta.storeName}-offsets`;
+        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
+        if (!offsetsStoreMeta) {
             return;
         }
-        const { paddedRowIds, rowCount, paddedCount } = padResult;
-        // 2) Create rowId buffer
-        const rowIdBuffer = this.createRowIdBuffer(paddedRowIds);
-        // 3) Create ephemeral offsets buffer (or dummy)
-        const offsetBuffer = await this.createEphemeralOffsetsBufferIfPossible(storeMeta.storeName);
-        // 4) Parse sort direction
-        const dirFlag = this.getDirectionFlag(sortDef);
-        // 5) Create param buffer
+        const { sortItems, rowCount } = await this.buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef);
+        if (rowCount < 2) {
+            return;
+        }
+        console.log('sortItems: ', sortItems, 'rowCount: ', rowCount);
+        const totalBytes = sortItems.byteLength;
+        // Check device limit
+        const maxBinding = this.device.limits.maxStorageBufferBindingSize || (128 * 1024 * 1024);
+        if (totalBytes > maxBinding) {
+            console.error(`Sort data requires ${totalBytes} bytes, ` +
+                `exceeding GPU limit of ${maxBinding}. Aborting.`);
+            return;
+        }
+        // Create a staging buffer for CPU → GPU
+        const stagingBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: true
+        });
+        new Uint32Array(stagingBuffer.getMappedRange()).set(sortItems);
+        stagingBuffer.unmap();
+        // Create the STORAGE buffer for compute
+        const sortItemsBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+        });
+        // Copy staging → STORAGE
+        {
+            const encoder = this.device.createCommandEncoder();
+            encoder.copyBufferToBuffer(stagingBuffer, 0, sortItemsBuffer, 0, totalBytes);
+            this.device.queue.submit([encoder.finish()]);
+        }
+        stagingBuffer.destroy();
+        // Build pipeline and helper buffers
+        const { pipeline } = this.createBitonicSortPipelineForJson();
         const paramBuffer = this.createParamBuffer();
-        // 6) Create debug atomic buffer
         const debugAtomicBuffer = this.createDebugAtomicBuffer();
-        // 7) Create a zero buffer
         const zeroBuffer = this.createZeroBuffer();
-        // 8) Create the compute pipeline
-        const pipeline = this.createBitonicPipeline(this.bitonicModuleCode);
-        // 9) Create the bind group
-        const bindGroup = this.createBitonicBindGroup(pipeline, rowIdBuffer, offsetBuffer, paramBuffer, debugAtomicBuffer);
-        // 10) Run the bitonic sort passes
-        const sizeLimit = paddedCount; // merges up to "paddedCount"
-        for (let size = 2; size <= sizeLimit; size <<= 1) {
+        // Standard bitonic pattern
+        const paddedCount = 1 << Math.ceil(Math.log2(rowCount));
+        const itemFieldCount = this.computeFieldCountForDefinition(sortDef);
+        // Create bind group
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: sortItemsBuffer } },
+                { binding: 1, resource: { buffer: paramBuffer } },
+                { binding: 2, resource: { buffer: debugAtomicBuffer } }
+            ]
+        });
+        // Execute passes
+        for (let size = 2; size <= paddedCount; size <<= 1) {
             for (let halfSize = size >> 1; halfSize > 0; halfSize >>= 1) {
-                await this.runBitonicPass(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, dirFlag, rowCount, paddedCount);
+                await this.runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, itemFieldCount);
             }
         }
-        // 11) Read back the final row IDs (only the first rowCount are real)
-        const finalPaddedRowIds = await this.readBackRowIds(rowIdBuffer, paddedRowIds.byteLength);
-        const sortedRowIds = finalPaddedRowIds.subarray(0, rowCount);
-        // 12) CPU check to confirm ascending or descending
-        this.assertSortedArray(sortedRowIds, dirFlag);
-        // 13) Clean up ephemeral buffers
-        offsetBuffer.destroy();
+        const finalRowIds = await this.readBackSortedRowIds(sortItemsBuffer, rowCount, itemFieldCount);
+        // Cleanup
+        sortItemsBuffer.destroy();
+        paramBuffer.destroy();
         debugAtomicBuffer.destroy();
         zeroBuffer.destroy();
     }
+    /****
+     * Computes how many 32-bit words each row’s offset data will contain
+     * for the given SortDefinition.
+     *
+     * In the earlier offsets logic, each field used 8 bytes (2 × 32-bit words).
+     * So if we have N fields, the total is (N × 2).
+     ****/
+    computeFieldCountForDefinition(sortDef) {
+        // Each field is stored as two 32-bit words in the offsets array:
+        return sortDef.sortFields.length * 2;
+    }
     /**
-     * WGSL code for the bitonic sort. In production, you might load this from a file;
-     * here we keep it inline for brevity.
+     * Reads back the (rowId) portion of each item, ignoring the numeric fields,
+     * returning them in sorted order.
+     *
+     * @private
+     * @param {GPUBuffer} itemsBuffer - The final sorted items.
+     * @param {number} rowCount - The real number of items (un-padded).
+     * @param {number} fieldsPerItem - The # of numeric fields per item (excluding rowId).
+     * @returns {Promise<Uint32Array>} The sorted row IDs in ascending order.
      */
-    bitonicModuleCode = /* wgsl */ `
+    async readBackSortedRowIds(itemsBuffer, rowCount, fieldsPerItem) {
+        if (rowCount === 0)
+            return new Uint32Array();
+        // Each item is (1 + fieldsPerItem) u32s
+        const stride = 1 + fieldsPerItem;
+        const totalWords = rowCount * stride;
+        const totalBytes = totalWords * 4;
+        // Create a staging buffer
+        const staging = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        // Copy the entire itemsBuffer to the staging
+        {
+            const cmd = this.device.createCommandEncoder();
+            console.log('copyBufferToBuffer4');
+            cmd.copyBufferToBuffer(itemsBuffer, 0, staging, 0, totalBytes);
+            this.device.queue.submit([cmd.finish()]);
+            await this.device.queue.onSubmittedWorkDone();
+        }
+        // Map the staging buffer
+        await staging.mapAsync(GPUMapMode.READ);
+        const copyArray = new Uint32Array(staging.getMappedRange().slice(0));
+        staging.unmap();
+        staging.destroy();
+        // The first word of each item is the rowId.
+        const result = new Uint32Array(rowCount);
+        for (let i = 0; i < rowCount; i++) {
+            const base = i * stride;
+            result[i] = copyArray[base];
+        }
+        return result;
+    }
+    async runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, fieldsPerItem) {
+        // 1) Reset the debug atomic to zero
+        await this.resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer);
+        // 2) Write param buffer: [size, halfSize, rowCount, paddedCount, fieldsPerItem]
+        const paramData = new Uint32Array([
+            size,
+            halfSize,
+            rowCount,
+            paddedCount,
+            fieldsPerItem
+        ]);
+        this.device.queue.writeBuffer(paramBuffer, 0, paramData);
+        // 3) Dispatch
+        const commandEncoder = this.device.createCommandEncoder();
+        const pass = commandEncoder.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        const workgroups = Math.ceil(paddedCount / 256);
+        pass.dispatchWorkgroups(workgroups);
+        pass.end();
+        this.device.queue.submit([commandEncoder.finish()]);
+        await this.device.queue.onSubmittedWorkDone();
+    }
+    /**
+     * Gathers offsets-store data for a single (store, definition) pair,
+     * producing a single typed array of "sort items."
+     *
+     * Each matched row gets:
+     *   [ rowId, field0, field1, ..., fieldN ]
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The metadata of the main store.
+     * @param {StoreMetadata} offsetsStoreMeta - The metadata of the offsets store for this main store.
+     * @param {SortDefinition} sortDef - The definition whose offsets we want.
+     * @returns {Promise<{ sortItems: Uint32Array; rowCount: number }>}
+     */
+    async buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef) {
+        const offsetsKeyMap = this.storeKeyMap.get(offsetsStoreMeta.storeName);
+        const allKeys = Array.from(offsetsKeyMap.keys());
+        const matchedKeys = allKeys.filter(k => k.endsWith(`::${sortDef.name}`));
+        if (matchedKeys.length === 0) {
+            return { sortItems: new Uint32Array(0), rowCount: 0 };
+        }
+        // Fetch all relevant offset rows
+        const { results } = await this.getMultipleByKeys(offsetsStoreMeta.storeName, matchedKeys);
+        const mainKeyMap = this.storeKeyMap.get(storeMeta.storeName);
+        // Sum up total words. Each row uses 1 word for rowId + offsetData.length words.
+        let totalWords = 0;
+        for (const r of results) {
+            if (r && r instanceof Uint32Array) {
+                totalWords += (1 + r.length);
+            }
+        }
+        // Build one big typed array for all items
+        const rowCount = matchedKeys.length;
+        const combined = new Uint32Array(totalWords);
+        // Fill the combined array
+        let writePos = 0;
+        for (let i = 0; i < matchedKeys.length; i++) {
+            const offsetKey = matchedKeys[i];
+            const offsetData = results[i];
+            if (!offsetData) {
+                continue;
+            }
+            const mainKey = offsetKey.replace(`::${sortDef.name}`, "");
+            const rowId = mainKeyMap.get(mainKey) ?? 0;
+            combined[writePos++] = rowId;
+            combined.set(offsetData, writePos);
+            writePos += offsetData.length;
+        }
+        return { sortItems: combined, rowCount };
+    }
+    createBitonicSortPipelineForJson() {
+        const code = /* wgsl */ `
 struct Params {
-    size: u32,
-    halfSize: u32,
-    dirFlag: u32,
-    actualCount: u32,
-    paddedCount: u32
+  size: u32,
+  halfSize: u32,
+  rowCount: u32,
+  paddedCount: u32,
+  fieldsPerItem: u32
 }
 
-@group(0) @binding(0) var<storage, read_write> rowIds: array<u32>;
-@group(0) @binding(1) var<storage, read> offsets: array<u32>;
-@group(0) @binding(2) var<uniform> params: Params;
-@group(0) @binding(3) var<storage, read_write> debugAtomic: atomic<u32>;
+@group(0) @binding(0) var<storage, read_write> items: array<u32>; // [rowId, f0, f1, ...]
+@group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> debugAtomic: atomic<u32>;
 
-fn compareAndSwap(idxA: u32, idxB: u32, ascending: bool) {
-    let rowA = rowIds[idxA];
-    let rowB = rowIds[idxB];
+fn lexCompare(aStart: u32, bStart: u32, fields: u32) -> bool {
+  // Return true if A > B (for ascending-swap checks).
+  // 
+  // rowId is at items[aStart], fields start at aStart+1
+  // We'll compare items[aStart+1 + i] vs items[bStart+1 + i]
+  // for i in [0..fields).
+  for (var i = 0u; i < fields; i++) {
+    let av = items[aStart + 1u + i];
+    let bv = items[bStart + 1u + i];
+    if (av < bv) { return false; }  // means A < B
+    if (av > bv) { return true; }   // means A > B
+  }
+  return false; // if all fields are equal, treat as "A == B" => no swap
+}
 
-    var offsetA: u32;
-    var offsetB: u32;
+fn compareAndSwap(i: u32, j: u32) {
+  let stride = 1u + params.fieldsPerItem;
+  let aStart = i * stride;
+  let bStart = j * stride;
 
-    if (rowA <= params.actualCount) {
-        offsetA = offsets[(rowA - 1u) * 2u];
-    } else {
-        offsetA = select(0u, 0xffffffffu, ascending);
+  let aShouldSwap = lexCompare(aStart, bStart, params.fieldsPerItem);
+  // If aShouldSwap==true, that means itemA > itemB, so swap to get ascending
+  if (aShouldSwap) {
+    // swap each 32-bit word
+    for (var w = 0u; w < stride; w++) {
+      let tmp = items[aStart + w];
+      items[aStart + w] = items[bStart + w];
+      items[bStart + w] = tmp;
     }
-
-    if (rowB <= params.actualCount) {
-        offsetB = offsets[(rowB - 1u) * 2u];
-    } else {
-        offsetB = select(0u, 0xffffffffu, ascending);
-    }
-
-    var shouldSwap = false;
-    if (ascending) {
-        shouldSwap = (offsetA > offsetB);
-    } else {
-        shouldSwap = (offsetA < offsetB);
-    }
-
-    if (shouldSwap) {
-        rowIds[idxA] = rowB;
-        rowIds[idxB] = rowA;
-        atomicStore(&debugAtomic, 1u);
-    }
+    atomicStore(&debugAtomic, 1u);
+  }
 }
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-    let i = global_id.x;
-    if (i >= params.paddedCount) {
-        return;
-    }
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let i = gid.x;
+  if (i >= params.paddedCount) {
+    return;
+  }
 
-    let size = params.size;
-    let halfSize = params.halfSize;
+  let size = params.size;
+  let halfSize = params.halfSize;
 
-    let flip = ((i & (size >> 1u)) != 0u);
-    var ascending = (params.dirFlag == 1u);
-    if (flip) {
-        ascending = !ascending;
+  let flip = (i & (size >> 1u)) != 0u;
+  // For this simple example, let's always do ascending sorts
+  // If you want descending, set a bool or do "if (flip) invert"
+  let mate = i ^ halfSize;
+  if (mate < params.paddedCount && mate != i) {
+    if (i < mate) {
+      compareAndSwap(i, mate);
+    } else {
+      compareAndSwap(mate, i);
     }
-
-    let mate = i ^ halfSize;
-    if (mate < params.paddedCount && mate != i) {
-        if (i < mate) {
-            compareAndSwap(i, mate, ascending);
-        } else {
-            compareAndSwap(mate, i, ascending);
-        }
-    }
+  }
 }
 `;
-    /**
-     * Prepares and pads row IDs for GPU sorting if needed.
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The metadata for the store.
-     * @returns {RowIdPaddingResult | null} The padded array and sizes, or null if too few rows.
-     */
-    prepareRowIdsForSort(storeMeta) {
-        const rowIdsOriginal = new Uint32Array(storeMeta.rows.map(r => r.rowId));
-        const rowCount = rowIdsOriginal.length;
-        if (rowCount < 2) {
-            console.warn("Store has fewer than 2 rows; no sorting needed.");
-            return null;
-        }
-        console.log("Unsorted row IDs:", rowIdsOriginal);
-        // Next power of two
-        const paddedCount = 1 << Math.ceil(Math.log2(rowCount));
-        // Padded array: the first rowCount entries are real, the rest are sentinel row IDs.
-        const paddedRowIds = new Uint32Array(paddedCount);
-        paddedRowIds.set(rowIdsOriginal, 0);
-        for (let i = rowCount; i < paddedCount; i++) {
-            // Any ID > rowCount acts as sentinel
-            paddedRowIds[i] = rowCount + (i + 1);
-        }
-        return { paddedRowIds, rowCount, paddedCount };
-    }
-    /**
-     * Creates a GPU buffer to store row IDs.
-     *
-     * @private
-     * @param {Uint32Array} rowIdData - The data (row IDs) to store in the buffer.
-     * @returns {GPUBuffer} A GPU buffer containing the row IDs.
-     */
-    createRowIdBuffer(rowIdData) {
-        const bufferSize = rowIdData.byteLength;
-        const buffer = this.device.createBuffer({
-            size: bufferSize,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: true
+        const module = this.device.createShaderModule({ code });
+        const pipeline = this.device.createComputePipeline({
+            layout: "auto",
+            compute: { module, entryPoint: "main" },
         });
-        new Uint32Array(buffer.getMappedRange()).set(rowIdData);
-        buffer.unmap();
-        return buffer;
-    }
-    /**
-     * Creates an ephemeral copy of the offsets buffer (if one exists) so we don't mutate
-     * the original buffer directly during sorting. If no offsets buffer is found,
-     * returns a small dummy buffer instead.
-     *
-     * @private
-     * @param {string} storeName - The name of the store (e.g. "MyStore"), from which
-     *   the offsets store name is derived ("MyStore-offsets").
-     * @returns {Promise<GPUBuffer>} A buffer suitable for reading/writing during the sort.
-     */
-    async createEphemeralOffsetsBufferIfPossible(storeName) {
-        const offsetsStoreName = `${storeName}-offsets`;
-        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
-        if (offsetsStoreMeta?.buffers?.[0]?.gpuBuffer) {
-            const originalOffsetBuffer = offsetsStoreMeta.buffers[0].gpuBuffer;
-            const ephemeralOffsetBuffer = this.device.createBuffer({
-                size: originalOffsetBuffer.size,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-            });
-            // Copy from original → ephemeral
-            {
-                const cmd = this.device.createCommandEncoder();
-                cmd.copyBufferToBuffer(originalOffsetBuffer, 0, ephemeralOffsetBuffer, 0, originalOffsetBuffer.size);
-                this.device.queue.submit([cmd.finish()]);
-                await this.device.queue.onSubmittedWorkDone();
-            }
-            return ephemeralOffsetBuffer;
-        }
-        // Fallback dummy buffer
-        return this.device.createBuffer({
-            size: 4,
-            usage: GPUBufferUsage.STORAGE
-        });
-    }
-    /**
-     * Returns 1 if the first field in the sort definition is ascending, 0 if descending.
-     *
-     * @private
-     * @param {SortDefinition} sortDef - The sort definition to evaluate.
-     * @returns {number} - 1 if ascending, 0 if descending.
-     */
-    getDirectionFlag(sortDef) {
-        const firstField = sortDef.sortFields[0];
-        const ascending = (firstField.sortDirection === "Asc");
-        return ascending ? 1 : 0;
+        return { pipeline };
     }
     /**
      * Creates a uniform buffer to store bitonic sorting parameters.
@@ -1609,22 +1688,6 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
             size: 5 * 4, // 5 x u32
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
-    }
-    /**
-     * Writes the bitonic sorting parameters to the specified uniform param buffer.
-     *
-     * @private
-     * @param {GPUBuffer} paramBuffer - The GPU buffer to which param data is written.
-     * @param {number} size - The current sub-block size for the bitonic pass.
-     * @param {number} halfSize - Half of the sub-block size.
-     * @param {number} dirFlag - 1 for ascending, 0 for descending.
-     * @param {number} actualCount - The actual number of rows to sort.
-     * @param {number} paddedCount - The next power-of-two size of the row ID array.
-     * @returns {void}
-     */
-    writeParamBuffer(paramBuffer, size, halfSize, dirFlag, actualCount, paddedCount) {
-        const paramData = new Uint32Array([size, halfSize, dirFlag, actualCount, paddedCount]);
-        this.device.queue.writeBuffer(paramBuffer, 0, paramData);
     }
     /**
      * Creates a buffer used as an atomic "debug" buffer (e.g., to detect swaps).
@@ -1672,144 +1735,6 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
         cmd.copyBufferToBuffer(zeroBuffer, 0, debugAtomicBuffer, 0, 4);
         this.device.queue.submit([cmd.finish()]);
         await this.device.queue.onSubmittedWorkDone();
-    }
-    /**
-     * Creates the GPU compute pipeline for the bitonic sort shader module.
-     *
-     * @private
-     * @param {string} bitonicModuleCode - WGSL code for the bitonic sort compute shader.
-     * @returns {GPUComputePipeline} The created pipeline.
-     */
-    createBitonicPipeline(bitonicModuleCode) {
-        const bitonicModule = this.device.createShaderModule({ code: bitonicModuleCode });
-        return this.device.createComputePipeline({
-            layout: "auto",
-            compute: {
-                module: bitonicModule,
-                entryPoint: "main",
-            },
-        });
-    }
-    /**
-     * Creates a bind group for the bitonic sort pipeline, attaching rowId buffer, offsets buffer,
-     * param buffer, and debug atomic buffer.
-     *
-     * @private
-     * @param {GPUComputePipeline} pipeline - The pipeline whose bind group layout we will use.
-     * @param {GPUBuffer} rowIdBuffer - The buffer holding row IDs.
-     * @param {GPUBuffer} offsetBuffer - A buffer containing offsets for each row (JSON-based).
-     * @param {GPUBuffer} paramBuffer - A uniform buffer holding sorting parameters.
-     * @param {GPUBuffer} debugAtomicBuffer - A storage buffer used for atomic writes to detect swaps.
-     * @returns {GPUBindGroup} The bind group connecting these resources.
-     */
-    createBitonicBindGroup(pipeline, rowIdBuffer, offsetBuffer, paramBuffer, debugAtomicBuffer) {
-        return this.device.createBindGroup({
-            layout: pipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: { buffer: rowIdBuffer } },
-                { binding: 1, resource: { buffer: offsetBuffer } },
-                { binding: 2, resource: { buffer: paramBuffer } },
-                { binding: 3, resource: { buffer: debugAtomicBuffer } },
-            ]
-        });
-    }
-    /**
-     * Executes one pass of the bitonic merge sort algorithm on the GPU,
-     * configuring the size and halfSize parameters.
-     *
-     * @private
-     * @param {GPUComputePipeline} pipeline - The compute pipeline.
-     * @param {GPUBindGroup} bindGroup - The bind group containing buffers.
-     * @param {GPUBuffer} paramBuffer - The buffer where bitonic parameters are written.
-     * @param {GPUBuffer} debugAtomicBuffer - A buffer used for atomic swap detection.
-     * @param {GPUBuffer} zeroBuffer - A small buffer containing a single zero value (used for resets).
-     * @param {number} size - The current size of the sub-block in bitonic sorting.
-     * @param {number} halfSize - Half of that sub-block size.
-     * @param {number} dirFlag - 1 for ascending, 0 for descending.
-     * @param {number} actualCount - Actual number of rows to sort (un-padded).
-     * @param {number} paddedCount - Power-of-two row count, possibly above actual count.
-     * @returns {Promise<void>} A promise that resolves once the GPU pass is completed.
-     */
-    async runBitonicPass(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, dirFlag, actualCount, paddedCount) {
-        // 1) Reset debugAtomic to 0
-        await this.resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer);
-        // 2) Write param buffer
-        this.writeParamBuffer(paramBuffer, size, halfSize, dirFlag, actualCount, paddedCount);
-        // 3) Dispatch
-        const cmdEnc = this.device.createCommandEncoder();
-        const passEnc = cmdEnc.beginComputePass();
-        passEnc.setPipeline(pipeline);
-        passEnc.setBindGroup(0, bindGroup);
-        const workgroupCount = Math.ceil(paddedCount / 256);
-        passEnc.dispatchWorkgroups(workgroupCount);
-        passEnc.end();
-        this.device.queue.submit([cmdEnc.finish()]);
-        await this.device.queue.onSubmittedWorkDone();
-    }
-    /**
-     * Reads back the row IDs from the GPU buffer into a Uint32Array on the CPU.
-     *
-     * @private
-     * @param {GPUBuffer} rowIdBuffer - The GPU buffer holding the row IDs.
-     * @param {number} totalBytes - The total byte length needed for the copy.
-     * @returns {Promise<Uint32Array>} A promise resolving to the final array of row IDs.
-     */
-    async readBackRowIds(rowIdBuffer, totalBytes) {
-        // Create staging buffer
-        const stagingBuffer = this.device.createBuffer({
-            size: totalBytes,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-        // Copy rowIdBuffer -> staging
-        {
-            const cmdEncoder = this.device.createCommandEncoder();
-            cmdEncoder.copyBufferToBuffer(rowIdBuffer, 0, stagingBuffer, 0, totalBytes);
-            this.device.queue.submit([cmdEncoder.finish()]);
-            await this.device.queue.onSubmittedWorkDone();
-        }
-        // Map and read
-        await stagingBuffer.mapAsync(GPUMapMode.READ);
-        const copyArray = new Uint32Array(stagingBuffer.getMappedRange().slice(0));
-        stagingBuffer.unmap();
-        stagingBuffer.destroy();
-        return copyArray;
-    }
-    /**
-     * Checks whether `arr` is sorted in ascending order if `dirFlag=1`,
-     * or descending order if `dirFlag=0`. Logs a warning if out-of-order.
-     *
-     * @private
-     * @param {Uint32Array} arr - The array of row IDs to verify.
-     * @param {number} dirFlag - 1 means ascending, 0 means descending.
-     * @returns {void}
-     */
-    assertSortedArray(arr, dirFlag) {
-        if (arr.length < 2) {
-            console.log("Array is trivially sorted (length < 2).");
-            return;
-        }
-        const ascending = (dirFlag === 1);
-        for (let i = 1; i < arr.length; i++) {
-            if (ascending) {
-                if (arr[i - 1] > arr[i]) {
-                    console.warn("Array is NOT sorted ascending. First out-of-order pair at indices", i - 1, i, arr[i - 1], arr[i]);
-                    return;
-                }
-            }
-            else {
-                // descending
-                if (arr[i - 1] < arr[i]) {
-                    console.warn("Array is NOT sorted descending. First out-of-order pair at indices", i - 1, i, arr[i - 1], arr[i]);
-                    return;
-                }
-            }
-        }
-        if (ascending) {
-            console.log("✔ Array is sorted ascending (CPU check).");
-        }
-        else {
-            console.log("✔ Array is sorted descending (CPU check).");
-        }
     }
     /**
      * Handles the main store write (row metadata, buffer, etc.).
@@ -1861,12 +1786,6 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
         for (const singleDefinition of storeMeta.sortDefinition) {
             // 1) Compute numeric keys for this definition
             const singleDefinitionOffsets = this.getJsonFieldOffsetsForSingleDefinition(value, singleDefinition);
-            // 2) [Optional] Debug snippet
-            if (Math.random() < 0.0002) {
-                console.log(`Debugging offsets for definition "${singleDefinition.name}"`, singleDefinition);
-                console.log("Object value:", value);
-                console.log("Serialized Uint32Array:", singleDefinitionOffsets);
-            }
             // 3) Create ArrayBuffer copy
             const offsetsCopy = new Uint32Array(singleDefinitionOffsets);
             const offsetsArrayBuffer = offsetsCopy.buffer;
@@ -1884,6 +1803,30 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
                 gpuBuffer: offsetsGpuBuffer,
                 operationType,
             });
+        }
+    }
+    /**
+     * Logs how much GPU buffer space is actually used (in bytes) across all
+     * buffers in the offsets store for a particular main store.
+     *
+     * @param {string} storeName - The name of the **main** store. We'll look for "<storeName>-offsets".
+     */
+    async logOffsetsStoreUsage(storeName) {
+        const offsetsStoreName = `${storeName}-offsets`;
+        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
+        if (!offsetsStoreMeta) {
+            console.warn(`No offsets store found for ${offsetsStoreName}.`);
+            return;
+        }
+        let totalUsed = 0;
+        for (const bufferMeta of offsetsStoreMeta.buffers) {
+            const buffer = bufferMeta.gpuBuffer;
+            if (!buffer)
+                continue;
+            // We track used bytes in (gpuBuffer as any)._usedBytes. 
+            // If missing, assume 0.
+            const usedBytes = buffer._usedBytes || 0;
+            totalUsed += usedBytes;
         }
     }
 }
