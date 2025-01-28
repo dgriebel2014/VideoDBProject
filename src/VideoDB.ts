@@ -1795,8 +1795,8 @@ export class VideoDB {
                 return this.serializeString(value, invert);
             default:
                 // Fallback for unknown or null
-                const fallback = new Uint32Array([0]);
-                if (invert) fallback[0] = 0xFFFFFFFF;
+                const fallback = new Uint32Array(1);
+                fallback[0] = invert ? 0xFFFFFFFF : 0;
                 return fallback;
         }
     }
@@ -1855,7 +1855,9 @@ export class VideoDB {
     private serializeNumber(rawValue: any, invert: boolean): Uint32Array {
         // If not a finite number => store fallback
         if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
-            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
+            const fallback = new Uint32Array(1);
+            fallback[0] = invert ? 0xFFFFFFFF : 0;
+            return fallback;
         }
 
         // If integer in [0, 2^32-1], store in one 32-bit word
@@ -1894,7 +1896,9 @@ export class VideoDB {
     private serializeString(rawValue: any, invert: boolean): Uint32Array {
         // For non-strings, return a fixed empty/inverted-empty value
         if (typeof rawValue !== "string") {
-            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
+            const fallback = new Uint32Array(1);
+            fallback[0] = invert ? 0xFFFFFFFF : 0;
+            return fallback;
         }
 
         // Build a cache key that distinguishes 'invert' usage.
@@ -1909,20 +1913,16 @@ export class VideoDB {
         }
 
         // Not cached, so compute the codepoints:
-        const codePoints: number[] = [];
-        for (const ch of rawValue) {
-            const cp = ch.codePointAt(0)!; // guaranteed non-null
-            const word = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
-            codePoints.push(word);
+        const codePoints = new Uint32Array(rawValue.length);
+        for (let i = 0; i < rawValue.length; i++) {
+            const cp = rawValue.codePointAt(i)!; // guaranteed non-null
+            codePoints[i] = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
         }
 
-        // Convert to a Uint32Array once.
-        const result = Uint32Array.from(codePoints);
-
         // Store in cache
-        this.stringCache.set(key, result);
+        this.stringCache.set(key, codePoints);
 
-        return result;
+        return codePoints;
     }
 
     /**
