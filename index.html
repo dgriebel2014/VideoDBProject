@@ -2108,11 +2108,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                 }
 
                 sortDef.sortFields.forEach((sortField, index) => {
-                    logToConsole(`[INFO]   Sort Field ${index + 1}:`);
-                    logToConsole(`[INFO]     Data Type: ${sortField.dataType}`);
-                    logToConsole(`[INFO]     Sort Column: ${sortField.sortColumn}`);
-                    logToConsole(`[INFO]     Path: ${sortField.path}`);
-                    logToConsole(`[INFO]     Sort Direction: ${sortField.sortDirection}`);
+                    logToConsole(`[INFO]   Sort Field ${index + 1} ${sortField.sortColumn}:, Data Type: ${sortField.dataType}, Sort Direction: ${sortField.sortDirection}`);
                 });
             });
         }
