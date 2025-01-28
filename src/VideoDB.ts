@@ -16,6 +16,10 @@ export class VideoDB {
     public isReady: boolean | null = true;
     private waitUntilReadyPromise: Promise<void> | null = null;
     private readyResolver: (() => void) | null = null;
+    private float64Buffer = new ArrayBuffer(8);
+    private float64View = new DataView(this.float64Buffer);
+    private dateParseCache = new Map<string, number>();
+    private stringCache = new Map<string, Uint32Array>();
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -1799,78 +1803,124 @@ export class VideoDB {
      * Example: store a Date (or date-string) as 64-bit => two 32-bit words [hi, lo].
      */
     private serializeDate(rawValue: any, invert: boolean): Uint32Array {
+        // Handle null / undefined quickly:
         if (rawValue == null) {
-            // e.g. store "null date" as [0,0] or [0xFFFFFFFF, 0xFFFFFFFF] if invert
-            return new Uint32Array([invert ? 0xFFFFFFFF : 0, invert ? 0xFFFFFFFF : 0]);
+            return new Uint32Array([
+                invert ? 0xFFFFFFFF : 0,
+                invert ? 0xFFFFFFFF : 0
+            ]);
         }
-        const ms = new Date(rawValue).getTime();
 
-        // We'll store as two 32-bit words: the high 32 bits and the low 32 bits
+        // Convert rawValue → ms from epoch:
+        let ms: number;
+        if (typeof rawValue === "number") {
+            // Already numeric, interpret as epoch ms
+            ms = rawValue;
+        } else if (rawValue instanceof Date) {
+            // Already a Date object
+            ms = rawValue.getTime();
+        } else {
+            // Probably a string—use cache if possible
+            const str = String(rawValue);
+            const cached = this.dateParseCache.get(str);
+            if (cached !== undefined) {
+                ms = cached;
+            } else {
+                ms = Date.parse(str);
+                this.dateParseCache.set(str, ms);
+            }
+        }
+
+        // Compute hi/lo words
         const hi = Math.floor(ms / 0x100000000) >>> 0;
         const lo = (ms >>> 0);
 
-        let arr = new Uint32Array([hi, lo]);
-        if (invert) {
-            arr[0] = 0xFFFFFFFF - arr[0];
-            arr[1] = 0xFFFFFFFF - arr[1];
+        // If invert, bitwise-invert them
+        const out = new Uint32Array(2);
+        if (!invert) {
+            out[0] = hi;
+            out[1] = lo;
+        } else {
+            out[0] = 0xFFFFFFFF - hi;
+            out[1] = 0xFFFFFFFF - lo;
         }
-        return arr;
+        return out;
     }
 
     /**
      * Serialize a JS number into either one 32-bit integer or a 64-bit float (2 words).
      */
     private serializeNumber(rawValue: any, invert: boolean): Uint32Array {
+        // If not a finite number => store fallback
         if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
-            // store 0 or 0xFFFFFFFF as a fallback
             return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
         }
 
-        // If integer in [0, 2^32-1], store in one word for compactness
-        if (Number.isInteger(rawValue) && rawValue >= 0 && rawValue <= 0xFFFFFFFF) {
-            const val32 = invert ? (0xFFFFFFFF - rawValue) : rawValue;
+        // If integer in [0, 2^32-1], store in one 32-bit word
+        if (
+            Number.isInteger(rawValue) &&
+            rawValue >= 0 &&
+            rawValue <= 0xFFFFFFFF
+        ) {
+            const val32 = invert
+                ? (0xFFFFFFFF - rawValue) >>> 0
+                : rawValue >>> 0;
             return new Uint32Array([val32]);
         }
 
-        // Otherwise store the 64-bit float bit pattern in 2 words.
-        const buffer = new ArrayBuffer(8);
-        const view = new DataView(buffer);
-        // big-endian or little-endian depends on how you want to handle cross-platform
-        // for typical usage, let's do little-endian:
-        view.setFloat64(0, rawValue, true);
+        // Otherwise store as 64-bit float in two words
+        // (hi, lo) for consistency or (lo, hi) depending on your endianness policy
 
-        // read out the 2 words
-        let lo = view.getUint32(0, true);
-        let hi = view.getUint32(4, true);
+        // Reuse our class-level buffer and DataView:
+        this.float64View.setFloat64(0, rawValue, true); // little-endian
+
+        let lo = this.float64View.getUint32(0, true);
+        let hi = this.float64View.getUint32(4, true);
 
         if (invert) {
-            // Bitwise inversion of floats in descending mode is an approximation
-            // that may not strictly invert ordering across positive/negative boundaries
-            // but might be acceptable if your domain is known (e.g. all positive).
             lo = 0xFFFFFFFF - lo;
             hi = 0xFFFFFFFF - hi;
         }
 
-        return new Uint32Array([hi, lo]);  // store [hi, lo]
+        // Return a fresh typed array [hi, lo]
+        return new Uint32Array([hi, lo]);
     }
 
     /**
-     * Serialize a string by storing each codepoint in a 32-bit word.
+     * Serialize a string by storing each codepoint in a 32-bit word, with caching.
      */
     private serializeString(rawValue: any, invert: boolean): Uint32Array {
+        // For non-strings, return a fixed empty/inverted-empty value
         if (typeof rawValue !== "string") {
-            // store "empty" if not a proper string
             return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
         }
 
-        // Convert each codepoint to one 32-bit
+        // Build a cache key that distinguishes 'invert' usage.
+        // For instance, prefix with "0" or "1" or any delimiter that won't conflict.
+        // Or you could just do `const key = invert + ":" + rawValue;`
+        const key = invert ? `1:${rawValue}` : `0:${rawValue}`;
+
+        // Check cache first:
+        const cached = this.stringCache.get(key);
+        if (cached) {
+            return cached;
+        }
+
+        // Not cached, so compute the codepoints:
         const codePoints: number[] = [];
-        for (const char of rawValue) {
-            const cp = char.codePointAt(0)!;
-            const word = invert ? (0xFFFFFFFF - cp) : cp;
+        for (const ch of rawValue) {
+            const cp = ch.codePointAt(0)!; // guaranteed non-null
+            const word = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
             codePoints.push(word);
         }
-        return Uint32Array.from(codePoints);
+
+        // Convert to a Uint32Array once.
+        const result = Uint32Array.from(codePoints);
+
+        // Store in cache
+        this.stringCache.set(key, result);
+
+        return result;
     }
 
     /**

@@ -2090,6 +2090,34 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
         }
 
         /**
+         * Logs details of an array of sort definitions and their fields.
+         * @param {SortDefinition[]} sortDefinitions - Array of sort definition objects.
+         */
+        function logSortDefinitions(sortDefinitions) {
+            if (!Array.isArray(sortDefinitions)) {
+                logToConsole("[ERROR] Invalid sort definitions array.");
+                return;
+            }
+
+            sortDefinitions.forEach((sortDef, defIndex) => {
+                logToConsole(`[INFO] Sort Definition #${defIndex + 1}: ${sortDef.name}`);
+
+                if (!Array.isArray(sortDef.sortFields)) {
+                    logToConsole("[WARN] No sort fields found for this definition.");
+                    return;
+                }
+
+                sortDef.sortFields.forEach((sortField, index) => {
+                    logToConsole(`[INFO]   Sort Field ${index + 1}:`);
+                    logToConsole(`[INFO]     Data Type: ${sortField.dataType}`);
+                    logToConsole(`[INFO]     Sort Column: ${sortField.sortColumn}`);
+                    logToConsole(`[INFO]     Path: ${sortField.path}`);
+                    logToConsole(`[INFO]     Sort Direction: ${sortField.sortDirection}`);
+                });
+            });
+        }
+
+        /**
          * NEW helper function to fetch/store a specific public dataset,
          * previously done inside consumePublicData().
          * - Logs success/error to the console
@@ -2355,15 +2383,12 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                     logToConsole(`[TASK] Fetching dataset for "${label}" from "${url}"...`);
 
                     // Fetch & parse data
+                    const fetchStart = performance.now();
                     const jsonRows = await fetchColumnsAndData(url);
+                    const fetchTook = performance.now() - fetchStart;
+                    logToConsole(`[INFO] Fetch took ${fetchTook.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ms.`);
 
-                    // Calculate total size
-                    let totalBytes = 0;
-                    for (const row of jsonRows) {
-                        const rowStr = JSON.stringify(row);
-                        totalBytes += new TextEncoder().encode(rowStr).length;
-                    }
-                    const formattedSize = formatSize(totalBytes);
+                    const processStart = performance.now();
 
                     videoDB.createObjectStore(storeName, {
                         dataType: "JSON",
@@ -2379,7 +2404,10 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                         await videoDB.add(storeName, jsonRows[i] && jsonRows[i].id ? jsonRows[i].id : `row_${i}`, jsonRows[i]);
                     }
 
-                    logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}".`);
+                    const processTook = performance.now() - processStart;
+                    logToConsole(`[INFO] Import took ${processTook.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ms`);
+                    logSortDefinitions(sortDefinition);
+                    logToConsole(`[SUCCESS] Loaded ${videoDB.storeMetadataMap.get(storeName).totalRows.toLocaleString()} rows into "${storeName}"`);
                 } else {
                     logToConsole(`[SUCCESS] Viewing records in "${storeName}".`);
                 }
