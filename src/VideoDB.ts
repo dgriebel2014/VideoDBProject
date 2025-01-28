@@ -1200,6 +1200,8 @@ export class VideoDB {
             try {
                 await this.flushWrites();
                 await this.rebuildAllDirtySorts();
+                this.dateParseCache = new Map<string, number>();
+                this.stringCache = new Map<string, Uint32Array>();
             } catch (error) {
                 console.error('Error during timed flush operation:', error);
             } finally {
