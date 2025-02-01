@@ -7,6 +7,22 @@
  * A VideoDB class that stores all metadata in CPU memory, 
  * and actual data on the GPU
  */
+import {
+    StoreMetadata,
+    BufferMetadata,
+    RowMetadata,
+    InitialMetrics,
+    MapBufferSubsections,
+    PerKeyMetrics,
+    RowInfo,
+    SortDefinition,
+    SortField,
+    PendingWrite,
+    RowIdPaddingResult
+} from "./types/StoreMetadata";
+
+// For convenience, define a simple flag for inactive rows, e.g. 0x1.
+const ROW_INACTIVE_FLAG = 0x1;
 export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
     public storeKeyMap: Map<string, Map<string, number>>;
@@ -20,6 +36,8 @@ export class VideoDB {
     private float64View = new DataView(this.float64Buffer);
     private dateParseCache = new Map<string, number>();
     private stringCache = new Map<string, Uint32Array>();
+    private readonly textEncoder = new TextEncoder();
+    private readonly textDecoder = new TextDecoder();
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -706,7 +724,7 @@ export class VideoDB {
         if (rowId == null) {
             return null;
         }
-        const rowMetadata = rows.find((r) => r.rowId === rowId);
+        const rowMetadata = rows[rowId - 1];
         if (!rowMetadata) {
             return null;
         }
@@ -804,7 +822,7 @@ export class VideoDB {
         offset: number;
     } {
         // Dynamically pick a capacity that can hold 'size'
-        const neededCapacity = Math.max(storeMeta.bufferSize, roundUp(size, 256));
+        const neededCapacity = Math.max(storeMeta.bufferSize, this.roundUp(size, 256));
         const gpuBuffer = this.device.createBuffer({
             size: neededCapacity,
             usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -877,7 +895,7 @@ export class VideoDB {
         const ALIGNMENT = 256;
 
         // Align the offset to the nearest multiple of ALIGNMENT (256)
-        const alignedOffset = roundUp(usedBytes, ALIGNMENT);
+        const alignedOffset = this.roundUp(usedBytes, ALIGNMENT);
 
         // Check if alignedOffset + size exceeds the usable buffer size
         if (alignedOffset + size > gpuBuffer.size) {
@@ -917,7 +935,7 @@ export class VideoDB {
         const newBufferIndex = storeMeta.buffers.length;
 
         // Dynamically pick a capacity that can hold 'size'
-        const neededCapacity = Math.max(storeMeta.bufferSize, roundUp(size, 256));
+        const neededCapacity = Math.max(storeMeta.bufferSize, this.roundUp(size, 256));
         const newGpuBuffer = this.device.createBuffer({
             size: neededCapacity,
             usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -954,8 +972,8 @@ export class VideoDB {
         switch (storeMeta.dataType) {
             case "JSON": {
                 let jsonString = JSON.stringify(value);
-                jsonString = padJsonTo4Bytes(jsonString);
-                const cloned = new TextEncoder().encode(jsonString).slice();
+                jsonString = this.padJsonTo4Bytes(jsonString);
+                const cloned = this.textEncoder.encode(jsonString).slice();
                 resultBuffer = cloned.buffer;
                 break;
             }
@@ -997,7 +1015,7 @@ export class VideoDB {
         }
 
         // *** Finally, ensure the buffer is 4-byte-aligned for WebGPU. ***
-        return padTo4Bytes(resultBuffer);
+        return this.padTo4Bytes(resultBuffer);
     }
 
     /**
@@ -1021,7 +1039,7 @@ export class VideoDB {
         let rowId = keyMap.get(key);
         let rowMetadata = rowId == null
             ? null
-            : storeMeta.rows.find((r) => r.rowId === rowId) || null;
+            : storeMeta.rows[rowId - 1];  // O(1) lookup!
 
         // If active row exists and we are in "add" mode, throw:
         if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
@@ -1123,7 +1141,7 @@ export class VideoDB {
     private deserializeData(storeMeta: StoreMetadata, copiedData: Uint8Array): any {
         switch (storeMeta.dataType) {
             case "JSON": {
-                const jsonString = new TextDecoder().decode(copiedData);
+                const jsonString = this.textDecoder.decode(copiedData);
                 return JSON.parse(jsonString.trim());
             }
 
@@ -2072,72 +2090,54 @@ export class VideoDB {
             totalUsed += usedBytes;
         }
     }
-}
 
-import {
-    StoreMetadata,
-    BufferMetadata,
-    RowMetadata,
-    InitialMetrics,
-    MapBufferSubsections,
-    PerKeyMetrics,
-    RowInfo,
-    SortDefinition,
-    SortField,
-    PendingWrite,
-    RowIdPaddingResult
-} from "./types/StoreMetadata";
-
-// For convenience, define a simple flag for inactive rows, e.g. 0x1.
-const ROW_INACTIVE_FLAG = 0x1;
-
-/**
- * Rounds the given value up to the nearest multiple of `align`.
- *
- * @param {number} value - The original value.
- * @param {number} align - The alignment boundary.
- * @returns {number} The smallest integer >= `value` that is a multiple of `align`.
- */
-function roundUp(value: number, align: number): number {
-    return Math.ceil(value / align) * align;
-}
-
-/**
- * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
- * by appending spaces as needed.
- *
- * @param {string} jsonString - The original JSON string to pad.
- * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
- */
-function padJsonTo4Bytes(jsonString: string): string {
-    const encoder = new TextEncoder();
-    const initialBytes = encoder.encode(jsonString).length;
-    const remainder = initialBytes % 4;
-
-    if (remainder === 0) {
-        return jsonString;
+    /**
+    * Rounds the given value up to the nearest multiple of `align`.
+    *
+    * @param {number} value - The original value.
+    * @param {number} align - The alignment boundary.
+    * @returns {number} The smallest integer >= `value` that is a multiple of `align`.
+    */
+    private roundUp(value: number, align: number): number {
+        return Math.ceil(value / align) * align;
     }
-    const needed = 4 - remainder;
-    return jsonString + " ".repeat(needed);
-}
 
-/**
- * Pads the given ArrayBuffer so that its byte length is a multiple of 4.
- * If it is already aligned, returns the original buffer. Otherwise, returns
- * a new buffer with zero-padding at the end.
- *
- * @param {ArrayBuffer} ab - The original ArrayBuffer to pad.
- * @returns {ArrayBuffer} A 4-byte-aligned ArrayBuffer.
- */
-function padTo4Bytes(ab: ArrayBuffer): ArrayBuffer {
-    const remainder = ab.byteLength % 4;
-    if (remainder === 0) {
-        // Already aligned
-        return ab;
+    /**
+    * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
+    * by appending spaces as needed.
+    *
+    * @param {string} jsonString - The original JSON string to pad.
+    * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
+    */
+    private padJsonTo4Bytes(jsonString: string): string {
+        const initialBytes = this.textEncoder.encode(jsonString).length;
+        const remainder = initialBytes % 4;
+
+        if (remainder === 0) {
+            return jsonString;
+        }
+        const needed = 4 - remainder;
+        return jsonString + " ".repeat(needed);
     }
-    const needed = 4 - remainder;
-    const padded = new Uint8Array(ab.byteLength + needed);
-    padded.set(new Uint8Array(ab), 0); // copy the original bytes
-    // Extra bytes remain zero
-    return padded.buffer;
+
+    /**
+    * Pads the given ArrayBuffer so that its byte length is a multiple of 4.
+    * If it is already aligned, returns the original buffer. Otherwise, returns
+    * a new buffer with zero-padding at the end.
+    *
+    * @param {ArrayBuffer} ab - The original ArrayBuffer to pad.
+    * @returns {ArrayBuffer} A 4-byte-aligned ArrayBuffer.
+    */
+    private padTo4Bytes(ab: ArrayBuffer): ArrayBuffer {
+        const remainder = ab.byteLength % 4;
+        if (remainder === 0) {
+            // Already aligned
+            return ab;
+        }
+        const needed = 4 - remainder;
+        const padded = new Uint8Array(ab.byteLength + needed);
+        padded.set(new Uint8Array(ab), 0); // Copy the original bytes.
+        // The extra bytes are left as zero.
+        return padded.buffer;
+    }
 }
