@@ -218,6 +218,10 @@ export class VideoDB {
         if (!rowMetadata) {
             return;
         }
+        // Mark the row as inactive so that subsequent lookups ignore it.
+        rowMetadata.flags = (rowMetadata.flags ?? 0) | ROW_INACTIVE_FLAG;
+        // Optionally remove the key from the keyMap to prevent future retrieval.
+        keyMap.delete(key);
         // Create a zeroed ArrayBuffer to overwrite the row data (optional)
         const zeroedArrayBuffer = new ArrayBuffer(rowMetadata.length);
         const zeroedView = new Uint8Array(zeroedArrayBuffer);
@@ -907,11 +911,6 @@ export class VideoDB {
             if (!storeMeta.sortDefinition || storeMeta.sortDefinition.length === 0) {
                 continue;
             }
-            // Rebuild each definition in sequence
-            // jdg jdg jdg
-            //    for (const def of storeMeta.sortDefinition) {
-            //        await this.runGpuSortForDefinition(storeMeta, def);
-            //    }
         }
     }
     /**
@@ -1415,7 +1414,13 @@ export class VideoDB {
         return new Uint32Array([hi, lo]);
     }
     /**
-     * Serialize a string by storing each codepoint in a 32-bit word, with caching.
+     * Serializes a string by storing each Unicode code point in a 32-bit word, with caching.
+     * This function now correctly handles surrogate pairs.
+     *
+     * @private
+     * @param {any} rawValue - The input value to serialize (expected to be a string).
+     * @param {boolean} invert - Whether to invert the code point values (used for descending order).
+     * @returns {Uint32Array} A Uint32Array representing the serialized code points.
      */
     serializeString(rawValue, invert) {
         // For non-strings, return a fixed empty/inverted-empty value
@@ -1425,363 +1430,23 @@ export class VideoDB {
             return fallback;
         }
         // Build a cache key that distinguishes 'invert' usage.
-        // For instance, prefix with "0" or "1" or any delimiter that won't conflict.
-        // Or you could just do `const key = invert + ":" + rawValue;`
         const key = invert ? `1:${rawValue}` : `0:${rawValue}`;
         // Check cache first:
         const cached = this.stringCache.get(key);
         if (cached) {
             return cached;
         }
-        // Not cached, so compute the codepoints:
-        const codePoints = new Uint32Array(rawValue.length);
-        for (let i = 0; i < rawValue.length; i++) {
-            const cp = rawValue.codePointAt(i); // guaranteed non-null
-            codePoints[i] = invert ? (0xFFFFFFFF - cp) >>> 0 : cp;
+        // Not cached, so compute the code points using proper Unicode iteration.
+        const codePointsArray = [];
+        for (const char of rawValue) {
+            // Each iteration 'char' is a full Unicode character (including surrogate pairs)
+            const cp = char.codePointAt(0); // guaranteed non-null
+            codePointsArray.push(invert ? (0xFFFFFFFF - cp) >>> 0 : cp);
         }
+        const codePoints = new Uint32Array(codePointsArray);
         // Store in cache
         this.stringCache.set(key, codePoints);
         return codePoints;
-    }
-    /**
-     * Sorts rows for a given store and definition using a GPU bitonic approach,
-     * with a two-buffer method (staging + storage) to avoid mapping the STORAGE buffer directly.
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The store metadata being sorted.
-     * @param {SortDefinition} sortDef - One definition specifying how to sort the rows.
-     * @returns {Promise<void>} Resolves once the GPU sort is complete or aborts if over limit.
-     */
-    async runGpuSortForDefinition(storeMeta, sortDef) {
-        const offsetsStoreName = `${storeMeta.storeName}-offsets`;
-        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
-        if (!offsetsStoreMeta) {
-            return;
-        }
-        const { sortItems, rowCount } = await this.buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef);
-        if (rowCount < 2) {
-            return;
-        }
-        console.log('sortItems: ', sortItems, 'rowCount: ', rowCount);
-        const totalBytes = sortItems.byteLength;
-        // Check device limit
-        const maxBinding = this.device.limits.maxStorageBufferBindingSize || (128 * 1024 * 1024);
-        if (totalBytes > maxBinding) {
-            console.error(`Sort data requires ${totalBytes} bytes, ` +
-                `exceeding GPU limit of ${maxBinding}. Aborting.`);
-            return;
-        }
-        // Create a staging buffer for CPU → GPU
-        const stagingBuffer = this.device.createBuffer({
-            size: totalBytes,
-            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: true
-        });
-        new Uint32Array(stagingBuffer.getMappedRange()).set(sortItems);
-        stagingBuffer.unmap();
-        // Create the STORAGE buffer for compute
-        const sortItemsBuffer = this.device.createBuffer({
-            size: totalBytes,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-        });
-        // Copy staging → STORAGE
-        {
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(stagingBuffer, 0, sortItemsBuffer, 0, totalBytes);
-            this.device.queue.submit([encoder.finish()]);
-        }
-        stagingBuffer.destroy();
-        // Build pipeline and helper buffers
-        const { pipeline } = this.createBitonicSortPipelineForJson();
-        const paramBuffer = this.createParamBuffer();
-        const debugAtomicBuffer = this.createDebugAtomicBuffer();
-        const zeroBuffer = this.createZeroBuffer();
-        // Standard bitonic pattern
-        const paddedCount = 1 << Math.ceil(Math.log2(rowCount));
-        const itemFieldCount = this.computeFieldCountForDefinition(sortDef);
-        // Create bind group
-        const bindGroup = this.device.createBindGroup({
-            layout: pipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: { buffer: sortItemsBuffer } },
-                { binding: 1, resource: { buffer: paramBuffer } },
-                { binding: 2, resource: { buffer: debugAtomicBuffer } }
-            ]
-        });
-        // Execute passes
-        for (let size = 2; size <= paddedCount; size <<= 1) {
-            for (let halfSize = size >> 1; halfSize > 0; halfSize >>= 1) {
-                await this.runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, itemFieldCount);
-            }
-        }
-        const finalRowIds = await this.readBackSortedRowIds(sortItemsBuffer, rowCount, itemFieldCount);
-        // Cleanup
-        sortItemsBuffer.destroy();
-        paramBuffer.destroy();
-        debugAtomicBuffer.destroy();
-        zeroBuffer.destroy();
-    }
-    /****
-     * Computes how many 32-bit words each row’s offset data will contain
-     * for the given SortDefinition.
-     *
-     * In the earlier offsets logic, each field used 8 bytes (2 × 32-bit words).
-     * So if we have N fields, the total is (N × 2).
-     ****/
-    computeFieldCountForDefinition(sortDef) {
-        // Each field is stored as two 32-bit words in the offsets array:
-        return sortDef.sortFields.length * 2;
-    }
-    /**
-     * Reads back the (rowId) portion of each item, ignoring the numeric fields,
-     * returning them in sorted order.
-     *
-     * @private
-     * @param {GPUBuffer} itemsBuffer - The final sorted items.
-     * @param {number} rowCount - The real number of items (un-padded).
-     * @param {number} fieldsPerItem - The # of numeric fields per item (excluding rowId).
-     * @returns {Promise<Uint32Array>} The sorted row IDs in ascending order.
-     */
-    async readBackSortedRowIds(itemsBuffer, rowCount, fieldsPerItem) {
-        if (rowCount === 0)
-            return new Uint32Array();
-        // Each item is (1 + fieldsPerItem) u32s
-        const stride = 1 + fieldsPerItem;
-        const totalWords = rowCount * stride;
-        const totalBytes = totalWords * 4;
-        // Create a staging buffer
-        const staging = this.device.createBuffer({
-            size: totalBytes,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-        // Copy the entire itemsBuffer to the staging
-        {
-            const cmd = this.device.createCommandEncoder();
-            console.log('copyBufferToBuffer4');
-            cmd.copyBufferToBuffer(itemsBuffer, 0, staging, 0, totalBytes);
-            this.device.queue.submit([cmd.finish()]);
-            await this.device.queue.onSubmittedWorkDone();
-        }
-        // Map the staging buffer
-        await staging.mapAsync(GPUMapMode.READ);
-        const copyArray = new Uint32Array(staging.getMappedRange().slice(0));
-        staging.unmap();
-        staging.destroy();
-        // The first word of each item is the rowId.
-        const result = new Uint32Array(rowCount);
-        for (let i = 0; i < rowCount; i++) {
-            const base = i * stride;
-            result[i] = copyArray[base];
-        }
-        return result;
-    }
-    async runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, fieldsPerItem) {
-        // 1) Reset the debug atomic to zero
-        await this.resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer);
-        // 2) Write param buffer: [size, halfSize, rowCount, paddedCount, fieldsPerItem]
-        const paramData = new Uint32Array([
-            size,
-            halfSize,
-            rowCount,
-            paddedCount,
-            fieldsPerItem
-        ]);
-        this.device.queue.writeBuffer(paramBuffer, 0, paramData);
-        // 3) Dispatch
-        const commandEncoder = this.device.createCommandEncoder();
-        const pass = commandEncoder.beginComputePass();
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(0, bindGroup);
-        const workgroups = Math.ceil(paddedCount / 256);
-        pass.dispatchWorkgroups(workgroups);
-        pass.end();
-        this.device.queue.submit([commandEncoder.finish()]);
-        await this.device.queue.onSubmittedWorkDone();
-    }
-    /**
-     * Gathers offsets-store data for a single (store, definition) pair,
-     * producing a single typed array of "sort items."
-     *
-     * Each matched row gets:
-     *   [ rowId, field0, field1, ..., fieldN ]
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The metadata of the main store.
-     * @param {StoreMetadata} offsetsStoreMeta - The metadata of the offsets store for this main store.
-     * @param {SortDefinition} sortDef - The definition whose offsets we want.
-     * @returns {Promise<{ sortItems: Uint32Array; rowCount: number }>}
-     */
-    async buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef) {
-        const offsetsKeyMap = this.storeKeyMap.get(offsetsStoreMeta.storeName);
-        const allKeys = Array.from(offsetsKeyMap.keys());
-        const matchedKeys = allKeys.filter(k => k.endsWith(`::${sortDef.name}`));
-        if (matchedKeys.length === 0) {
-            return { sortItems: new Uint32Array(0), rowCount: 0 };
-        }
-        // Fetch all relevant offset rows
-        const { results } = await this.getMultipleByKeys(offsetsStoreMeta.storeName, matchedKeys);
-        const mainKeyMap = this.storeKeyMap.get(storeMeta.storeName);
-        // Sum up total words. Each row uses 1 word for rowId + offsetData.length words.
-        let totalWords = 0;
-        for (const r of results) {
-            if (r && r instanceof Uint32Array) {
-                totalWords += (1 + r.length);
-            }
-        }
-        // Build one big typed array for all items
-        const rowCount = matchedKeys.length;
-        const combined = new Uint32Array(totalWords);
-        // Fill the combined array
-        let writePos = 0;
-        for (let i = 0; i < matchedKeys.length; i++) {
-            const offsetKey = matchedKeys[i];
-            const offsetData = results[i];
-            if (!offsetData) {
-                continue;
-            }
-            const mainKey = offsetKey.replace(`::${sortDef.name}`, "");
-            const rowId = mainKeyMap.get(mainKey) ?? 0;
-            combined[writePos++] = rowId;
-            combined.set(offsetData, writePos);
-            writePos += offsetData.length;
-        }
-        return { sortItems: combined, rowCount };
-    }
-    createBitonicSortPipelineForJson() {
-        const code = /* wgsl */ `
-struct Params {
-  size: u32,
-  halfSize: u32,
-  rowCount: u32,
-  paddedCount: u32,
-  fieldsPerItem: u32
-}
-
-@group(0) @binding(0) var<storage, read_write> items: array<u32>; // [rowId, f0, f1, ...]
-@group(0) @binding(1) var<uniform> params: Params;
-@group(0) @binding(2) var<storage, read_write> debugAtomic: atomic<u32>;
-
-fn lexCompare(aStart: u32, bStart: u32, fields: u32) -> bool {
-  // Return true if A > B (for ascending-swap checks).
-  // 
-  // rowId is at items[aStart], fields start at aStart+1
-  // We'll compare items[aStart+1 + i] vs items[bStart+1 + i]
-  // for i in [0..fields).
-  for (var i = 0u; i < fields; i++) {
-    let av = items[aStart + 1u + i];
-    let bv = items[bStart + 1u + i];
-    if (av < bv) { return false; }  // means A < B
-    if (av > bv) { return true; }   // means A > B
-  }
-  return false; // if all fields are equal, treat as "A == B" => no swap
-}
-
-fn compareAndSwap(i: u32, j: u32) {
-  let stride = 1u + params.fieldsPerItem;
-  let aStart = i * stride;
-  let bStart = j * stride;
-
-  let aShouldSwap = lexCompare(aStart, bStart, params.fieldsPerItem);
-  // If aShouldSwap==true, that means itemA > itemB, so swap to get ascending
-  if (aShouldSwap) {
-    // swap each 32-bit word
-    for (var w = 0u; w < stride; w++) {
-      let tmp = items[aStart + w];
-      items[aStart + w] = items[bStart + w];
-      items[bStart + w] = tmp;
-    }
-    atomicStore(&debugAtomic, 1u);
-  }
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let i = gid.x;
-  if (i >= params.paddedCount) {
-    return;
-  }
-
-  let size = params.size;
-  let halfSize = params.halfSize;
-
-  let flip = (i & (size >> 1u)) != 0u;
-  // For this simple example, let's always do ascending sorts
-  // If you want descending, set a bool or do "if (flip) invert"
-  let mate = i ^ halfSize;
-  if (mate < params.paddedCount && mate != i) {
-    if (i < mate) {
-      compareAndSwap(i, mate);
-    } else {
-      compareAndSwap(mate, i);
-    }
-  }
-}
-`;
-        const module = this.device.createShaderModule({ code });
-        const pipeline = this.device.createComputePipeline({
-            layout: "auto",
-            compute: { module, entryPoint: "main" },
-        });
-        return { pipeline };
-    }
-    /**
-     * Creates a uniform buffer to store bitonic sorting parameters.
-     *
-     * @private
-     * @returns {GPUBuffer} A GPU buffer suitable for storing 5 x u32 parameters.
-     */
-    createParamBuffer() {
-        return this.device.createBuffer({
-            size: 5 * 4, // 5 x u32
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-        });
-    }
-    /**
-     * Creates a buffer used as an atomic "debug" buffer (e.g., to detect swaps).
-     *
-     * @private
-     * @returns {GPUBuffer} A GPU buffer that can be used with atomic operations.
-     */
-    createDebugAtomicBuffer() {
-        const buffer = this.device.createBuffer({
-            size: 4,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-            mappedAtCreation: true
-        });
-        new Uint32Array(buffer.getMappedRange()).set([0]);
-        buffer.unmap();
-        return buffer;
-    }
-    /**
-     * Creates a small GPU buffer containing a single `0` value.
-     * Used for resetting other buffers atomically.
-     *
-     * @private
-     * @returns {GPUBuffer} A tiny buffer with one 32-bit zero.
-     */
-    createZeroBuffer() {
-        const zeroBuffer = this.device.createBuffer({
-            size: 4,
-            usage: GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: true
-        });
-        new Uint32Array(zeroBuffer.getMappedRange()).set([0]);
-        zeroBuffer.unmap();
-        return zeroBuffer;
-    }
-    /**
-     * Resets the debug atomic buffer to zero by copying from a small zero buffer.
-     *
-     * @private
-     * @param {GPUBuffer} debugAtomicBuffer - The buffer storing the atomic debug value.
-     * @param {GPUBuffer} zeroBuffer - A small GPU buffer containing a single zero value.
-     * @returns {Promise<void>} A promise that resolves once the reset copy is done.
-     */
-    async resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer) {
-        const cmd = this.device.createCommandEncoder();
-        cmd.copyBufferToBuffer(zeroBuffer, 0, debugAtomicBuffer, 0, 4);
-        this.device.queue.submit([cmd.finish()]);
-        await this.device.queue.onSubmittedWorkDone();
     }
     /**
      * Handles the main store write (row metadata, buffer, etc.).
