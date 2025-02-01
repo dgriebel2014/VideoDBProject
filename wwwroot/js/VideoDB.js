@@ -679,17 +679,20 @@ export class VideoDB {
             }
             case "TypedArray": {
                 if (!storeMeta.typedArrayType) {
-                    throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
+                    throw new Error(`typedArrayType is required when dataType is "TypedArray".`);
                 }
-                if (!(value instanceof globalThis[storeMeta.typedArrayType])) {
-                    throw new Error(`Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`);
+                const TypedArrayConstructor = globalThis[storeMeta.typedArrayType];
+                if (!(value instanceof TypedArrayConstructor)) {
+                    throw new Error(`Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta.storeName}".`);
                 }
-                resultBuffer = value.buffer;
+                // Create a new copy of the subarray data in case the typed array is a view into a larger buffer.
+                const typedArray = value;
+                resultBuffer = typedArray.buffer.slice(typedArray.byteOffset, typedArray.byteOffset + typedArray.byteLength);
                 break;
             }
             case "ArrayBuffer": {
                 if (!(value instanceof ArrayBuffer)) {
-                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
+                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta.storeName}".`);
                 }
                 resultBuffer = value;
                 break;
@@ -1383,34 +1386,34 @@ export class VideoDB {
     }
     /**
      * Serialize a JS number into either one 32-bit integer or a 64-bit float (2 words).
+     *
+     * @private
+     * @param {any} rawValue - The raw numeric value to serialize.
+     * @param {boolean} invert - Whether to invert the value for descending order.
+     * @returns {Uint32Array} A typed array representing the serialized number.
      */
     serializeNumber(rawValue, invert) {
-        // If not a finite number => store fallback
+        // If not a finite number, store a fallback value.
         if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
             const fallback = new Uint32Array(1);
             fallback[0] = invert ? 0xFFFFFFFF : 0;
             return fallback;
         }
-        // If integer in [0, 2^32-1], store in one 32-bit word
-        if (Number.isInteger(rawValue) &&
-            rawValue >= 0 &&
-            rawValue <= 0xFFFFFFFF) {
-            const val32 = invert
-                ? (0xFFFFFFFF - rawValue) >>> 0
-                : rawValue >>> 0;
+        // If an integer in [0, 2^32-1], store in one 32-bit word.
+        if (Number.isInteger(rawValue) && rawValue >= 0 && rawValue <= 0xFFFFFFFF) {
+            const val32 = invert ? (0xFFFFFFFF - rawValue) >>> 0 : rawValue >>> 0;
             return new Uint32Array([val32]);
         }
-        // Otherwise store as 64-bit float in two words
-        // (hi, lo) for consistency or (lo, hi) depending on your endianness policy
-        // Reuse our class-level buffer and DataView:
-        this.float64View.setFloat64(0, rawValue, true); // little-endian
-        let lo = this.float64View.getUint32(0, true);
-        let hi = this.float64View.getUint32(4, true);
+        // Otherwise, store as a 64-bit float in two 32-bit words.
+        const buffer = new ArrayBuffer(8);
+        const view = new DataView(buffer);
+        view.setFloat64(0, rawValue, true); // little-endian
+        let lo = view.getUint32(0, true);
+        let hi = view.getUint32(4, true);
         if (invert) {
             lo = 0xFFFFFFFF - lo;
             hi = 0xFFFFFFFF - hi;
         }
-        // Return a fresh typed array [hi, lo]
         return new Uint32Array([hi, lo]);
     }
     /**
