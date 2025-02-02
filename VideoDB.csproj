@@ -12,10 +12,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="src\POC-ConvertDateTimeToEpochMS.js" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="Microsoft.TypeScript.MSBuild" Version="5.2.2">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

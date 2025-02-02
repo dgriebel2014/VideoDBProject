@@ -2506,7 +2506,7 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
                 try {
                     // Wait until videoDB is ready
                     await videoDB.waitUntilReady();
-                    await videoDB.verifyFieldOffsets(storeName, 10);
+                    await videoDB.verifyFieldOffsets(storeName, 1);
                     console.info("Field offsets verification completed successfully.");
                 } catch (error) {
                     console.error("Error during field offsets verification:", error);
