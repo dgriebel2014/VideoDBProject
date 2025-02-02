@@ -1872,23 +1872,8 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         padded.set(new Uint8Array(ab), 0);
         return padded.buffer;
     }
-    /**
-     * Verifies that the field offsets stored for each sort definition match
-     * the expected offsets computed from the original JSON data. This method
-     * randomly selects a percentage of rows and compares, for each sort definition,
-     * the expected offset array with the one stored in the companion offsets store.
-     *
-     * In both success and failure cases the function logs for each sort field:
-     * - The expected start/end offset values,
-     * - The stored start/end offset values,
-     * - And the actual value (as found in the JSON record) for that sort field.
-     *
-     * @param {string} storeName - The name of the main JSON store.
-     * @param {number} [percentage=10] - Percentage of rows to verify (0–100).
-     * @returns {Promise<void>} Resolves once verification is complete.
-     */
     async verifyFieldOffsets(storeName, percentage = 10) {
-        // Retrieve the main store metadata.
+        // First, do the usual CPU‐side verification of stored offsets versus computed values.
         const mainStoreMeta = this.storeMetadataMap.get(storeName);
         if (!mainStoreMeta) {
             throw new Error(`Main store "${storeName}" not found.`);
@@ -1899,48 +1884,40 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         if (!mainStoreMeta.sortDefinition || mainStoreMeta.sortDefinition.length === 0) {
             throw new Error(`Store "${storeName}" has no sort definitions to verify.`);
         }
-        // Determine the companion offsets store name.
         const offsetsStoreName = `${storeName}-offsets`;
         const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
         if (!offsetsStoreMeta) {
             throw new Error(`Offsets store "${offsetsStoreName}" not found.`);
         }
-        // Get all keys from the main store.
         const keyMap = this.getKeyMap(storeName);
         const allKeys = Array.from(keyMap.keys());
         if (allKeys.length === 0) {
             console.info(`No keys found in store "${storeName}". Nothing to verify.`);
             return;
         }
-        // Determine how many keys to sample.
         const sampleSize = Math.max(1, Math.floor(allKeys.length * (percentage / 100)));
         const sampleKeys = this.getRandomSample(allKeys, sampleSize);
         let totalComparisons = 0;
         let passedComparisons = 0;
-        // For each sampled key, verify each sort definition.
         for (const key of sampleKeys) {
-            // Get the original JSON record.
+            // Get the JSON record using your existing get() call.
             const record = await this.get(storeName, key);
             if (record == null) {
                 console.warn(`Key "${key}" not found during verification.`);
                 continue;
             }
-            // For each sort definition...
+            // For each sort definition on the main store, compute what the numeric
+            // offsets should be from the JSON record and compare to what is stored.
             for (const sortDef of mainStoreMeta.sortDefinition) {
                 totalComparisons++;
-                // Compute the expected offsets using the same helper as used during writes.
                 const expectedOffsets = this.getJsonFieldOffsetsForSingleDefinition(record, sortDef);
-                // Build the composite key used in the offsets store.
                 const offsetKey = `${key}::${sortDef.name}`;
-                // Retrieve the stored offsets.
                 const storedValue = await this.get(offsetsStoreName, offsetKey);
                 if (!storedValue || !(storedValue instanceof Uint32Array)) {
                     console.error(`Offsets for key "${offsetKey}" are missing or not a Uint32Array.`);
                     continue;
                 }
-                // Compare the two Uint32Arrays.
                 if (this.uint32ArrayEqual(expectedOffsets, storedValue)) {
-                    // Log details even on success.
                     console.info(`Key "${offsetKey}" verified successfully:`);
                     let currentOffset = 0;
                     for (const field of sortDef.sortFields) {
@@ -1989,7 +1966,46 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
                 }
             }
         }
-        console.info(`Verification complete: ${passedComparisons} passed out of ${totalComparisons} comparisons (sampled ${sampleSize} keys).`);
+        console.info(`CPU Verification complete: ${passedComparisons} passed out of ${totalComparisons} comparisons (sampled ${sampleSize} keys).`);
+        // --- NEW: GPU Buffer Read Verification ---
+        // Instead of issuing a separate GPU read for each key, we batch all the sample keys
+        // into a single getMultiple call. This performs a single GPU-to-CPU transfer for all
+        // of the rows, letting us confirm that the data stored on the GPU produces the expected
+        // numeric offsets when processed.
+        console.info("Starting GPU buffer read verification (batched read)...");
+        const gpuResults = await this.getMultiple(storeName, sampleKeys);
+        let gpuTotalComparisons = 0;
+        let gpuPassedComparisons = 0;
+        for (let i = 0; i < sampleKeys.length; i++) {
+            const key = sampleKeys[i];
+            const gpuRecord = gpuResults[i];
+            if (gpuRecord == null) {
+                console.warn(`GPU read returned null for key "${key}".`);
+                continue;
+            }
+            // Now, for each sort definition, compute the numeric offsets from the JSON data
+            // as read directly from the GPU and compare with what is stored.
+            for (const sortDef of mainStoreMeta.sortDefinition) {
+                gpuTotalComparisons++;
+                const expectedOffsetsFromGPU = this.getJsonFieldOffsetsForSingleDefinition(gpuRecord, sortDef);
+                const offsetKey = `${key}::${sortDef.name}`;
+                const storedValue = await this.get(offsetsStoreName, offsetKey);
+                if (!storedValue || !(storedValue instanceof Uint32Array)) {
+                    console.error(`GPU Verification: Offsets for key "${offsetKey}" are missing or not a Uint32Array.`);
+                    continue;
+                }
+                if (this.uint32ArrayEqual(expectedOffsetsFromGPU, storedValue)) {
+                    console.info(`GPU Verification: Key "${offsetKey}" verified successfully on GPU read.`);
+                    gpuPassedComparisons++;
+                }
+                else {
+                    console.error(`GPU Verification: Mismatch for key "${offsetKey}" on GPU read.`);
+                    console.error(`  Expected: [${Array.from(expectedOffsetsFromGPU).join(", ")}]`);
+                    console.error(`  Found:    [${Array.from(storedValue).join(", ")}]`);
+                }
+            }
+        }
+        console.info(`GPU Verification complete: ${gpuPassedComparisons} passed out of ${gpuTotalComparisons} comparisons.`);
     }
     /**
      * Returns a random sample (without replacement) from the provided array.
