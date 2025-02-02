@@ -1,13 +1,12 @@
 // Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
 // Distributed under the MIT license.
-// For convenience, define a simple flag for inactive rows, e.g. 0x1.
-const ROW_INACTIVE_FLAG = 0x1;
+// videoDB.ts
 export class VideoDB {
     device;
     storeMetadataMap;
     storeKeyMap;
     pendingWrites = [];
-    BATCH_SIZE = 10000;
+    BATCH_SIZE = 12000;
     flushTimer = null;
     isReady = true;
     waitUntilReadyPromise = null;
@@ -218,7 +217,7 @@ export class VideoDB {
             return;
         }
         // Mark the row as inactive so that subsequent lookups ignore it.
-        rowMetadata.flags = (rowMetadata.flags ?? 0) | ROW_INACTIVE_FLAG;
+        rowMetadata.flags = (rowMetadata.flags ?? 0) | 0x1;
         // Optionally remove the key from the keyMap to prevent future retrieval.
         keyMap.delete(key);
         // Create a zeroed ArrayBuffer to overwrite the row data (optional)
@@ -484,7 +483,7 @@ export class VideoDB {
         if (!rowMetadata) {
             return null;
         }
-        if ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
+        if ((rowMetadata.flags ?? 0) & 0x1) {
             return null;
         }
         return rowMetadata;
@@ -719,13 +718,13 @@ export class VideoDB {
             ? null
             : storeMeta.rows[rowId - 1]; // O(1) lookup!
         // If active row exists and we are in "add" mode, throw:
-        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & 0x1)) {
             throw new Error(`Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`);
         }
         // Allocate space in a GPU buffer (just picks offset/bufferIndex, no write):
         const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
         // If row is new or inactive, create a fresh RowMetadata:
-        if (!rowMetadata || ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+        if (!rowMetadata || ((rowMetadata.flags ?? 0) & 0x1)) {
             rowId = storeMeta.rows.length + 1;
             rowMetadata = {
                 rowId,
@@ -766,7 +765,7 @@ export class VideoDB {
         }
         else {
             // Mark old row inactive
-            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | ROW_INACTIVE_FLAG;
+            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
             // Find new space for the bigger data
             const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
             const newRowId = storeMeta.rows.length + 1;
