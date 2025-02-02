@@ -1,22 +1,15 @@
 // Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
 // Distributed under the MIT license.
-// videoDB.ts
 export class VideoDB {
     device;
     storeMetadataMap;
     storeKeyMap;
     pendingWrites = [];
-    BATCH_SIZE = 12000;
+    BATCH_SIZE = 10000;
     flushTimer = null;
     isReady = true;
     waitUntilReadyPromise = null;
     readyResolver = null;
-    float64Buffer = new ArrayBuffer(8);
-    float64View = new DataView(this.float64Buffer);
-    dateParseCache = new Map();
-    stringCache = new Map();
-    textEncoder = new TextEncoder();
-    textDecoder = new TextDecoder();
     /**
      * Initializes a new instance of the VideoDB class.
      * @param {GPUDevice} device - The GPU device to be used for buffer operations.
@@ -211,19 +204,19 @@ export class VideoDB {
         // Retrieve store metadata and key map
         const storeMeta = this.getStoreMetadata(storeName);
         const keyMap = this.getKeyMap(storeName);
-        // Find row metadata for the active row
+        // Find active row metadata for the given key
         const rowMetadata = this.findActiveRowMetadata(keyMap, key, storeMeta.rows);
         if (!rowMetadata) {
             return;
         }
-        // Mark the row as inactive so that subsequent lookups ignore it.
+        // Mark the row as deleted (set the delete flag)
         rowMetadata.flags = (rowMetadata.flags ?? 0) | 0x1;
-        // Optionally remove the key from the keyMap to prevent future retrieval.
+        // Remove the key from the key map so that it is no longer accessible
         keyMap.delete(key);
         // Create a zeroed ArrayBuffer to overwrite the row data (optional)
         const zeroedArrayBuffer = new ArrayBuffer(rowMetadata.length);
         const zeroedView = new Uint8Array(zeroedArrayBuffer);
-        zeroedView.fill(0); // Optional: Fill with zeros for "true" deletion
+        zeroedView.fill(0); // Fill with zeros for a "true" deletion
         // Queue the delete operation as a pending write
         this.pendingWrites.push({
             storeMeta,
@@ -231,11 +224,10 @@ export class VideoDB {
             arrayBuffer: zeroedArrayBuffer,
             gpuBuffer: this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex),
             operationType: 'delete',
-            key // Include the key for metadata updates during flush
+            key, // Key included for metadata updates during flush, if needed.
         });
-        // Reset the flush timer
+        // Reset the flush timer and check if we need to flush immediately
         this.resetFlushTimer();
-        // Check if batch size threshold is met
         await this.checkAndFlush();
     }
     /**
@@ -479,7 +471,7 @@ export class VideoDB {
         if (rowId == null) {
             return null;
         }
-        const rowMetadata = rows[rowId - 1];
+        const rowMetadata = rows.find((r) => r.rowId === rowId);
         if (!rowMetadata) {
             return null;
         }
@@ -671,26 +663,23 @@ export class VideoDB {
             case "JSON": {
                 let jsonString = JSON.stringify(value);
                 jsonString = this.padJsonTo4Bytes(jsonString);
-                const cloned = this.textEncoder.encode(jsonString).slice();
+                const cloned = new TextEncoder().encode(jsonString).slice();
                 resultBuffer = cloned.buffer;
                 break;
             }
             case "TypedArray": {
                 if (!storeMeta.typedArrayType) {
-                    throw new Error(`typedArrayType is required when dataType is "TypedArray".`);
+                    throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
                 }
-                const TypedArrayConstructor = globalThis[storeMeta.typedArrayType];
-                if (!(value instanceof TypedArrayConstructor)) {
-                    throw new Error(`Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta.storeName}".`);
+                if (!(value instanceof globalThis[storeMeta.typedArrayType])) {
+                    throw new Error(`Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`);
                 }
-                // Create a new copy of the subarray data in case the typed array is a view into a larger buffer.
-                const typedArray = value;
-                resultBuffer = typedArray.buffer.slice(typedArray.byteOffset, typedArray.byteOffset + typedArray.byteLength);
+                resultBuffer = value.buffer;
                 break;
             }
             case "ArrayBuffer": {
                 if (!(value instanceof ArrayBuffer)) {
-                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta.storeName}".`);
+                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
                 }
                 resultBuffer = value;
                 break;
@@ -698,7 +687,7 @@ export class VideoDB {
             default:
                 throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
         }
-        // *** Finally, ensure the buffer is 4-byte-aligned for WebGPU. ***
+        // Finally, ensure the buffer is 4-byte-aligned for WebGPU.
         return this.padTo4Bytes(resultBuffer);
     }
     /**
@@ -716,7 +705,7 @@ export class VideoDB {
         let rowId = keyMap.get(key);
         let rowMetadata = rowId == null
             ? null
-            : storeMeta.rows[rowId - 1]; // O(1) lookup!
+            : storeMeta.rows.find((r) => r.rowId === rowId) || null;
         // If active row exists and we are in "add" mode, throw:
         if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & 0x1)) {
             throw new Error(`Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`);
@@ -796,7 +785,7 @@ export class VideoDB {
     deserializeData(storeMeta, copiedData) {
         switch (storeMeta.dataType) {
             case "JSON": {
-                const jsonString = this.textDecoder.decode(copiedData);
+                const jsonString = new TextDecoder().decode(copiedData);
                 return JSON.parse(jsonString.trim());
             }
             case "TypedArray": {
@@ -875,8 +864,6 @@ export class VideoDB {
             try {
                 await this.flushWrites();
                 await this.rebuildAllDirtySorts();
-                this.dateParseCache = new Map();
-                this.stringCache = new Map();
             }
             catch (error) {
                 console.error('Error during timed flush operation:', error);
@@ -912,6 +899,11 @@ export class VideoDB {
             if (!storeMeta.sortDefinition || storeMeta.sortDefinition.length === 0) {
                 continue;
             }
+            // Rebuild each definition in sequence
+            // jdg jdg jdg
+            //    for (const def of storeMeta.sortDefinition) {
+            //        await this.runGpuSortForDefinition(storeMeta, def);
+            //    }
         }
     }
     /**
@@ -1329,8 +1321,9 @@ export class VideoDB {
                 return this.serializeString(value, invert);
             default:
                 // Fallback for unknown or null
-                const fallback = new Uint32Array(1);
-                fallback[0] = invert ? 0xFFFFFFFF : 0;
+                const fallback = new Uint32Array([0]);
+                if (invert)
+                    fallback[0] = 0xFFFFFFFF;
                 return fallback;
         }
     }
@@ -1338,116 +1331,408 @@ export class VideoDB {
      * Example: store a Date (or date-string) as 64-bit => two 32-bit words [hi, lo].
      */
     serializeDate(rawValue, invert) {
-        // Handle null / undefined quickly:
         if (rawValue == null) {
-            return new Uint32Array([
-                invert ? 0xFFFFFFFF : 0,
-                invert ? 0xFFFFFFFF : 0
-            ]);
+            // e.g. store "null date" as [0,0] or [0xFFFFFFFF, 0xFFFFFFFF] if invert
+            return new Uint32Array([invert ? 0xFFFFFFFF : 0, invert ? 0xFFFFFFFF : 0]);
         }
-        // Convert rawValue → ms from epoch:
-        let ms;
-        if (typeof rawValue === "number") {
-            // Already numeric, interpret as epoch ms
-            ms = rawValue;
-        }
-        else if (rawValue instanceof Date) {
-            // Already a Date object
-            ms = rawValue.getTime();
-        }
-        else {
-            // Probably a string—use cache if possible
-            const str = String(rawValue);
-            const cached = this.dateParseCache.get(str);
-            if (cached !== undefined) {
-                ms = cached;
-            }
-            else {
-                ms = Date.parse(str);
-                this.dateParseCache.set(str, ms);
-            }
-        }
-        // Compute hi/lo words
+        const ms = new Date(rawValue).getTime();
+        // We'll store as two 32-bit words: the high 32 bits and the low 32 bits
         const hi = Math.floor(ms / 0x100000000) >>> 0;
         const lo = (ms >>> 0);
-        // If invert, bitwise-invert them
-        const out = new Uint32Array(2);
-        if (!invert) {
-            out[0] = hi;
-            out[1] = lo;
+        let arr = new Uint32Array([hi, lo]);
+        if (invert) {
+            arr[0] = 0xFFFFFFFF - arr[0];
+            arr[1] = 0xFFFFFFFF - arr[1];
         }
-        else {
-            out[0] = 0xFFFFFFFF - hi;
-            out[1] = 0xFFFFFFFF - lo;
-        }
-        return out;
+        return arr;
     }
     /**
      * Serialize a JS number into either one 32-bit integer or a 64-bit float (2 words).
-     *
-     * @private
-     * @param {any} rawValue - The raw numeric value to serialize.
-     * @param {boolean} invert - Whether to invert the value for descending order.
-     * @returns {Uint32Array} A typed array representing the serialized number.
      */
     serializeNumber(rawValue, invert) {
-        // If not a finite number, store a fallback value.
         if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
-            const fallback = new Uint32Array(1);
-            fallback[0] = invert ? 0xFFFFFFFF : 0;
-            return fallback;
+            // store 0 or 0xFFFFFFFF as a fallback
+            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
         }
-        // If an integer in [0, 2^32-1], store in one 32-bit word.
+        // If integer in [0, 2^32-1], store in one word for compactness
         if (Number.isInteger(rawValue) && rawValue >= 0 && rawValue <= 0xFFFFFFFF) {
-            const val32 = invert ? (0xFFFFFFFF - rawValue) >>> 0 : rawValue >>> 0;
+            const val32 = invert ? (0xFFFFFFFF - rawValue) : rawValue;
             return new Uint32Array([val32]);
         }
-        // Otherwise, store as a 64-bit float in two 32-bit words.
+        // Otherwise store the 64-bit float bit pattern in 2 words.
         const buffer = new ArrayBuffer(8);
         const view = new DataView(buffer);
-        view.setFloat64(0, rawValue, true); // little-endian
+        // big-endian or little-endian depends on how you want to handle cross-platform
+        // for typical usage, let's do little-endian:
+        view.setFloat64(0, rawValue, true);
+        // read out the 2 words
         let lo = view.getUint32(0, true);
         let hi = view.getUint32(4, true);
         if (invert) {
+            // Bitwise inversion of floats in descending mode is an approximation
+            // that may not strictly invert ordering across positive/negative boundaries
+            // but might be acceptable if your domain is known (e.g. all positive).
             lo = 0xFFFFFFFF - lo;
             hi = 0xFFFFFFFF - hi;
         }
-        return new Uint32Array([hi, lo]);
+        return new Uint32Array([hi, lo]); // store [hi, lo]
     }
     /**
-     * Serializes a string by storing each Unicode code point in a 32-bit word, with caching.
-     * This function now correctly handles surrogate pairs.
-     *
-     * @private
-     * @param {any} rawValue - The input value to serialize (expected to be a string).
-     * @param {boolean} invert - Whether to invert the code point values (used for descending order).
-     * @returns {Uint32Array} A Uint32Array representing the serialized code points.
+     * Serialize a string by storing each codepoint in a 32-bit word.
      */
     serializeString(rawValue, invert) {
-        // For non-strings, return a fixed empty/inverted-empty value
         if (typeof rawValue !== "string") {
-            const fallback = new Uint32Array(1);
-            fallback[0] = invert ? 0xFFFFFFFF : 0;
-            return fallback;
+            // store "empty" if not a proper string
+            return new Uint32Array([invert ? 0xFFFFFFFF : 0]);
         }
-        // Build a cache key that distinguishes 'invert' usage.
-        const key = invert ? `1:${rawValue}` : `0:${rawValue}`;
-        // Check cache first:
-        const cached = this.stringCache.get(key);
-        if (cached) {
-            return cached;
-        }
-        // Not cached, so compute the code points using proper Unicode iteration.
-        const codePointsArray = [];
+        // Convert each codepoint to one 32-bit
+        const codePoints = [];
         for (const char of rawValue) {
-            // Each iteration 'char' is a full Unicode character (including surrogate pairs)
-            const cp = char.codePointAt(0); // guaranteed non-null
-            codePointsArray.push(invert ? (0xFFFFFFFF - cp) >>> 0 : cp);
+            const cp = char.codePointAt(0);
+            const word = invert ? (0xFFFFFFFF - cp) : cp;
+            codePoints.push(word);
         }
-        const codePoints = new Uint32Array(codePointsArray);
-        // Store in cache
-        this.stringCache.set(key, codePoints);
-        return codePoints;
+        return Uint32Array.from(codePoints);
+    }
+    /**
+     * Sorts rows for a given store and definition using a GPU bitonic approach,
+     * with a two-buffer method (staging + storage) to avoid mapping the STORAGE buffer directly.
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The store metadata being sorted.
+     * @param {SortDefinition} sortDef - One definition specifying how to sort the rows.
+     * @returns {Promise<void>} Resolves once the GPU sort is complete or aborts if over limit.
+     */
+    async runGpuSortForDefinition(storeMeta, sortDef) {
+        const offsetsStoreName = `${storeMeta.storeName}-offsets`;
+        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
+        if (!offsetsStoreMeta) {
+            return;
+        }
+        const { sortItems, rowCount } = await this.buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef);
+        if (rowCount < 2) {
+            return;
+        }
+        console.log('sortItems: ', sortItems, 'rowCount: ', rowCount);
+        const totalBytes = sortItems.byteLength;
+        // Check device limit
+        const maxBinding = this.device.limits.maxStorageBufferBindingSize || (128 * 1024 * 1024);
+        if (totalBytes > maxBinding) {
+            console.error(`Sort data requires ${totalBytes} bytes, ` +
+                `exceeding GPU limit of ${maxBinding}. Aborting.`);
+            return;
+        }
+        // Create a staging buffer for CPU → GPU
+        const stagingBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: true
+        });
+        new Uint32Array(stagingBuffer.getMappedRange()).set(sortItems);
+        stagingBuffer.unmap();
+        // Create the STORAGE buffer for compute
+        const sortItemsBuffer = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+        });
+        // Copy staging → STORAGE
+        {
+            const encoder = this.device.createCommandEncoder();
+            encoder.copyBufferToBuffer(stagingBuffer, 0, sortItemsBuffer, 0, totalBytes);
+            this.device.queue.submit([encoder.finish()]);
+        }
+        stagingBuffer.destroy();
+        // Build pipeline and helper buffers
+        const { pipeline } = this.createBitonicSortPipelineForJson();
+        const paramBuffer = this.createParamBuffer();
+        const debugAtomicBuffer = this.createDebugAtomicBuffer();
+        const zeroBuffer = this.createZeroBuffer();
+        // Standard bitonic pattern
+        const paddedCount = 1 << Math.ceil(Math.log2(rowCount));
+        const itemFieldCount = this.computeFieldCountForDefinition(sortDef);
+        // Create bind group
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: sortItemsBuffer } },
+                { binding: 1, resource: { buffer: paramBuffer } },
+                { binding: 2, resource: { buffer: debugAtomicBuffer } }
+            ]
+        });
+        // Execute passes
+        for (let size = 2; size <= paddedCount; size <<= 1) {
+            for (let halfSize = size >> 1; halfSize > 0; halfSize >>= 1) {
+                await this.runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, itemFieldCount);
+            }
+        }
+        const finalRowIds = await this.readBackSortedRowIds(sortItemsBuffer, rowCount, itemFieldCount);
+        // Cleanup
+        sortItemsBuffer.destroy();
+        paramBuffer.destroy();
+        debugAtomicBuffer.destroy();
+        zeroBuffer.destroy();
+    }
+    /****
+     * Computes how many 32-bit words each row’s offset data will contain
+     * for the given SortDefinition.
+     *
+     * In the earlier offsets logic, each field used 8 bytes (2 × 32-bit words).
+     * So if we have N fields, the total is (N × 2).
+     ****/
+    computeFieldCountForDefinition(sortDef) {
+        // Each field is stored as two 32-bit words in the offsets array:
+        return sortDef.sortFields.length * 2;
+    }
+    /**
+     * Reads back the (rowId) portion of each item, ignoring the numeric fields,
+     * returning them in sorted order.
+     *
+     * @private
+     * @param {GPUBuffer} itemsBuffer - The final sorted items.
+     * @param {number} rowCount - The real number of items (un-padded).
+     * @param {number} fieldsPerItem - The # of numeric fields per item (excluding rowId).
+     * @returns {Promise<Uint32Array>} The sorted row IDs in ascending order.
+     */
+    async readBackSortedRowIds(itemsBuffer, rowCount, fieldsPerItem) {
+        if (rowCount === 0)
+            return new Uint32Array();
+        // Each item is (1 + fieldsPerItem) u32s
+        const stride = 1 + fieldsPerItem;
+        const totalWords = rowCount * stride;
+        const totalBytes = totalWords * 4;
+        // Create a staging buffer
+        const staging = this.device.createBuffer({
+            size: totalBytes,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        // Copy the entire itemsBuffer to the staging
+        {
+            const cmd = this.device.createCommandEncoder();
+            console.log('copyBufferToBuffer4');
+            cmd.copyBufferToBuffer(itemsBuffer, 0, staging, 0, totalBytes);
+            this.device.queue.submit([cmd.finish()]);
+            await this.device.queue.onSubmittedWorkDone();
+        }
+        // Map the staging buffer
+        await staging.mapAsync(GPUMapMode.READ);
+        const copyArray = new Uint32Array(staging.getMappedRange().slice(0));
+        staging.unmap();
+        staging.destroy();
+        // The first word of each item is the rowId.
+        const result = new Uint32Array(rowCount);
+        for (let i = 0; i < rowCount; i++) {
+            const base = i * stride;
+            result[i] = copyArray[base];
+        }
+        return result;
+    }
+    async runBitonicPassJson(pipeline, bindGroup, paramBuffer, debugAtomicBuffer, zeroBuffer, size, halfSize, rowCount, paddedCount, fieldsPerItem) {
+        // 1) Reset the debug atomic to zero
+        await this.resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer);
+        // 2) Write param buffer: [size, halfSize, rowCount, paddedCount, fieldsPerItem]
+        const paramData = new Uint32Array([
+            size,
+            halfSize,
+            rowCount,
+            paddedCount,
+            fieldsPerItem
+        ]);
+        this.device.queue.writeBuffer(paramBuffer, 0, paramData);
+        // 3) Dispatch
+        const commandEncoder = this.device.createCommandEncoder();
+        const pass = commandEncoder.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        const workgroups = Math.ceil(paddedCount / 256);
+        pass.dispatchWorkgroups(workgroups);
+        pass.end();
+        this.device.queue.submit([commandEncoder.finish()]);
+        await this.device.queue.onSubmittedWorkDone();
+    }
+    /**
+     * Gathers offsets-store data for a single (store, definition) pair,
+     * producing a single typed array of "sort items."
+     *
+     * Each matched row gets:
+     *   [ rowId, field0, field1, ..., fieldN ]
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The metadata of the main store.
+     * @param {StoreMetadata} offsetsStoreMeta - The metadata of the offsets store for this main store.
+     * @param {SortDefinition} sortDef - The definition whose offsets we want.
+     * @returns {Promise<{ sortItems: Uint32Array; rowCount: number }>}
+     */
+    async buildSortItemsArray(storeMeta, offsetsStoreMeta, sortDef) {
+        const offsetsKeyMap = this.storeKeyMap.get(offsetsStoreMeta.storeName);
+        const allKeys = Array.from(offsetsKeyMap.keys());
+        const matchedKeys = allKeys.filter(k => k.endsWith(`::${sortDef.name}`));
+        if (matchedKeys.length === 0) {
+            return { sortItems: new Uint32Array(0), rowCount: 0 };
+        }
+        // Fetch all relevant offset rows
+        const { results } = await this.getMultipleByKeys(offsetsStoreMeta.storeName, matchedKeys);
+        const mainKeyMap = this.storeKeyMap.get(storeMeta.storeName);
+        // Sum up total words. Each row uses 1 word for rowId + offsetData.length words.
+        let totalWords = 0;
+        for (const r of results) {
+            if (r && r instanceof Uint32Array) {
+                totalWords += (1 + r.length);
+            }
+        }
+        // Build one big typed array for all items
+        const rowCount = matchedKeys.length;
+        const combined = new Uint32Array(totalWords);
+        // Fill the combined array
+        let writePos = 0;
+        for (let i = 0; i < matchedKeys.length; i++) {
+            const offsetKey = matchedKeys[i];
+            const offsetData = results[i];
+            if (!offsetData) {
+                continue;
+            }
+            const mainKey = offsetKey.replace(`::${sortDef.name}`, "");
+            const rowId = mainKeyMap.get(mainKey) ?? 0;
+            combined[writePos++] = rowId;
+            combined.set(offsetData, writePos);
+            writePos += offsetData.length;
+        }
+        return { sortItems: combined, rowCount };
+    }
+    createBitonicSortPipelineForJson() {
+        const code = /* wgsl */ `
+struct Params {
+  size: u32,
+  halfSize: u32,
+  rowCount: u32,
+  paddedCount: u32,
+  fieldsPerItem: u32
+}
+
+@group(0) @binding(0) var<storage, read_write> items: array<u32>; // [rowId, f0, f1, ...]
+@group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> debugAtomic: atomic<u32>;
+
+fn lexCompare(aStart: u32, bStart: u32, fields: u32) -> bool {
+  // Return true if A > B (for ascending-swap checks).
+  // 
+  // rowId is at items[aStart], fields start at aStart+1
+  // We'll compare items[aStart+1 + i] vs items[bStart+1 + i]
+  // for i in [0..fields).
+  for (var i = 0u; i < fields; i++) {
+    let av = items[aStart + 1u + i];
+    let bv = items[bStart + 1u + i];
+    if (av < bv) { return false; }  // means A < B
+    if (av > bv) { return true; }   // means A > B
+  }
+  return false; // if all fields are equal, treat as "A == B" => no swap
+}
+
+fn compareAndSwap(i: u32, j: u32) {
+  let stride = 1u + params.fieldsPerItem;
+  let aStart = i * stride;
+  let bStart = j * stride;
+
+  let aShouldSwap = lexCompare(aStart, bStart, params.fieldsPerItem);
+  // If aShouldSwap==true, that means itemA > itemB, so swap to get ascending
+  if (aShouldSwap) {
+    // swap each 32-bit word
+    for (var w = 0u; w < stride; w++) {
+      let tmp = items[aStart + w];
+      items[aStart + w] = items[bStart + w];
+      items[bStart + w] = tmp;
+    }
+    atomicStore(&debugAtomic, 1u);
+  }
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let i = gid.x;
+  if (i >= params.paddedCount) {
+    return;
+  }
+
+  let size = params.size;
+  let halfSize = params.halfSize;
+
+  let flip = (i & (size >> 1u)) != 0u;
+  // For this simple example, let's always do ascending sorts
+  // If you want descending, set a bool or do "if (flip) invert"
+  let mate = i ^ halfSize;
+  if (mate < params.paddedCount && mate != i) {
+    if (i < mate) {
+      compareAndSwap(i, mate);
+    } else {
+      compareAndSwap(mate, i);
+    }
+  }
+}
+`;
+        const module = this.device.createShaderModule({ code });
+        const pipeline = this.device.createComputePipeline({
+            layout: "auto",
+            compute: { module, entryPoint: "main" },
+        });
+        return { pipeline };
+    }
+    /**
+     * Creates a uniform buffer to store bitonic sorting parameters.
+     *
+     * @private
+     * @returns {GPUBuffer} A GPU buffer suitable for storing 5 x u32 parameters.
+     */
+    createParamBuffer() {
+        return this.device.createBuffer({
+            size: 5 * 4, // 5 x u32
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+    }
+    /**
+     * Creates a buffer used as an atomic "debug" buffer (e.g., to detect swaps).
+     *
+     * @private
+     * @returns {GPUBuffer} A GPU buffer that can be used with atomic operations.
+     */
+    createDebugAtomicBuffer() {
+        const buffer = this.device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true
+        });
+        new Uint32Array(buffer.getMappedRange()).set([0]);
+        buffer.unmap();
+        return buffer;
+    }
+    /**
+     * Creates a small GPU buffer containing a single `0` value.
+     * Used for resetting other buffers atomically.
+     *
+     * @private
+     * @returns {GPUBuffer} A tiny buffer with one 32-bit zero.
+     */
+    createZeroBuffer() {
+        const zeroBuffer = this.device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: true
+        });
+        new Uint32Array(zeroBuffer.getMappedRange()).set([0]);
+        zeroBuffer.unmap();
+        return zeroBuffer;
+    }
+    /**
+     * Resets the debug atomic buffer to zero by copying from a small zero buffer.
+     *
+     * @private
+     * @param {GPUBuffer} debugAtomicBuffer - The buffer storing the atomic debug value.
+     * @param {GPUBuffer} zeroBuffer - A small GPU buffer containing a single zero value.
+     * @returns {Promise<void>} A promise that resolves once the reset copy is done.
+     */
+    async resetDebugAtomicBuffer(debugAtomicBuffer, zeroBuffer) {
+        const cmd = this.device.createCommandEncoder();
+        cmd.copyBufferToBuffer(zeroBuffer, 0, debugAtomicBuffer, 0, 4);
+        this.device.queue.submit([cmd.finish()]);
+        await this.device.queue.onSubmittedWorkDone();
     }
     /**
      * Handles the main store write (row metadata, buffer, etc.).
@@ -1543,24 +1828,25 @@ export class VideoDB {
         }
     }
     /**
-    * Rounds the given value up to the nearest multiple of `align`.
-    *
-    * @param {number} value - The original value.
-    * @param {number} align - The alignment boundary.
-    * @returns {number} The smallest integer >= `value` that is a multiple of `align`.
-    */
+     * Rounds the given value up to the nearest multiple of `align`.
+     *
+     * @param {number} value - The original value.
+     * @param {number} align - The alignment boundary.
+     * @returns {number} The smallest integer ≥ `value` that is a multiple of `align`.
+     */
     roundUp(value, align) {
         return Math.ceil(value / align) * align;
     }
     /**
-    * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
-    * by appending spaces as needed.
-    *
-    * @param {string} jsonString - The original JSON string to pad.
-    * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
-    */
+     * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
+     * by appending spaces as needed.
+     *
+     * @param {string} jsonString - The original JSON string to pad.
+     * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
+     */
     padJsonTo4Bytes(jsonString) {
-        const initialBytes = this.textEncoder.encode(jsonString).length;
+        const encoder = new TextEncoder();
+        const initialBytes = encoder.encode(jsonString).length;
         const remainder = initialBytes % 4;
         if (remainder === 0) {
             return jsonString;
@@ -1569,24 +1855,174 @@ export class VideoDB {
         return jsonString + " ".repeat(needed);
     }
     /**
-    * Pads the given ArrayBuffer so that its byte length is a multiple of 4.
-    * If it is already aligned, returns the original buffer. Otherwise, returns
-    * a new buffer with zero-padding at the end.
-    *
-    * @param {ArrayBuffer} ab - The original ArrayBuffer to pad.
-    * @returns {ArrayBuffer} A 4-byte-aligned ArrayBuffer.
-    */
+     * Pads the given ArrayBuffer so that its byte length is a multiple of 4.
+     * If it is already aligned, returns the original buffer. Otherwise, returns
+     * a new buffer with zero-padding at the end.
+     *
+     * @param {ArrayBuffer} ab - The original ArrayBuffer to pad.
+     * @returns {ArrayBuffer} A 4-byte-aligned ArrayBuffer.
+     */
     padTo4Bytes(ab) {
         const remainder = ab.byteLength % 4;
         if (remainder === 0) {
-            // Already aligned
             return ab;
         }
         const needed = 4 - remainder;
         const padded = new Uint8Array(ab.byteLength + needed);
-        padded.set(new Uint8Array(ab), 0); // Copy the original bytes.
-        // The extra bytes are left as zero.
+        padded.set(new Uint8Array(ab), 0);
         return padded.buffer;
+    }
+    /**
+     * Verifies that the field offsets stored for each sort definition match
+     * the expected offsets computed from the original JSON data. This method
+     * randomly selects a percentage of rows and compares, for each sort definition,
+     * the expected offset array with the one stored in the companion offsets store.
+     *
+     * In both success and failure cases the function logs for each sort field:
+     * - The expected start/end offset values,
+     * - The stored start/end offset values,
+     * - And the actual value (as found in the JSON record) for that sort field.
+     *
+     * @param {string} storeName - The name of the main JSON store.
+     * @param {number} [percentage=10] - Percentage of rows to verify (0–100).
+     * @returns {Promise<void>} Resolves once verification is complete.
+     */
+    async verifyFieldOffsets(storeName, percentage = 10) {
+        // Retrieve the main store metadata.
+        const mainStoreMeta = this.storeMetadataMap.get(storeName);
+        if (!mainStoreMeta) {
+            throw new Error(`Main store "${storeName}" not found.`);
+        }
+        if (mainStoreMeta.dataType !== "JSON") {
+            throw new Error(`Store "${storeName}" is not a JSON store.`);
+        }
+        if (!mainStoreMeta.sortDefinition || mainStoreMeta.sortDefinition.length === 0) {
+            throw new Error(`Store "${storeName}" has no sort definitions to verify.`);
+        }
+        // Determine the companion offsets store name.
+        const offsetsStoreName = `${storeName}-offsets`;
+        const offsetsStoreMeta = this.storeMetadataMap.get(offsetsStoreName);
+        if (!offsetsStoreMeta) {
+            throw new Error(`Offsets store "${offsetsStoreName}" not found.`);
+        }
+        // Get all keys from the main store.
+        const keyMap = this.getKeyMap(storeName);
+        const allKeys = Array.from(keyMap.keys());
+        if (allKeys.length === 0) {
+            console.info(`No keys found in store "${storeName}". Nothing to verify.`);
+            return;
+        }
+        // Determine how many keys to sample.
+        const sampleSize = Math.max(1, Math.floor(allKeys.length * (percentage / 100)));
+        const sampleKeys = this.getRandomSample(allKeys, sampleSize);
+        let totalComparisons = 0;
+        let passedComparisons = 0;
+        // For each sampled key, verify each sort definition.
+        for (const key of sampleKeys) {
+            // Get the original JSON record.
+            const record = await this.get(storeName, key);
+            if (record == null) {
+                console.warn(`Key "${key}" not found during verification.`);
+                continue;
+            }
+            // For each sort definition...
+            for (const sortDef of mainStoreMeta.sortDefinition) {
+                totalComparisons++;
+                // Compute the expected offsets using the same helper as used during writes.
+                const expectedOffsets = this.getJsonFieldOffsetsForSingleDefinition(record, sortDef);
+                // Build the composite key used in the offsets store.
+                const offsetKey = `${key}::${sortDef.name}`;
+                // Retrieve the stored offsets.
+                const storedValue = await this.get(offsetsStoreName, offsetKey);
+                if (!storedValue || !(storedValue instanceof Uint32Array)) {
+                    console.error(`Offsets for key "${offsetKey}" are missing or not a Uint32Array.`);
+                    continue;
+                }
+                // Compare the two Uint32Arrays.
+                if (this.uint32ArrayEqual(expectedOffsets, storedValue)) {
+                    // Log details even on success.
+                    console.info(`Key "${offsetKey}" verified successfully:`);
+                    let currentOffset = 0;
+                    for (const field of sortDef.sortFields) {
+                        const rawValue = this.getValueByPath(record, field.path);
+                        const expectedFieldArray = this.convertValueToUint32Array(rawValue, field.dataType, field.sortDirection);
+                        const fieldLength = expectedFieldArray.length;
+                        if (fieldLength === 0) {
+                            console.info(`  Field "${field.sortColumn}" (value: ${rawValue}) produced an empty offset array.`);
+                            continue;
+                        }
+                        const expectedStart = expectedFieldArray[0];
+                        const expectedEnd = expectedFieldArray[fieldLength - 1];
+                        const storedFieldArray = storedValue.slice(currentOffset, currentOffset + fieldLength);
+                        const storedStart = storedFieldArray[0];
+                        const storedEnd = storedFieldArray[fieldLength - 1];
+                        console.info(`  Field "${field.sortColumn}" (value: ${rawValue}):`);
+                        console.info(`    Expected offsets: start=${expectedStart}, end=${expectedEnd}`);
+                        console.info(`    Stored offsets:   start=${storedStart}, end=${storedEnd}`);
+                        currentOffset += fieldLength;
+                    }
+                    passedComparisons++;
+                }
+                else {
+                    console.error(`Mismatch for key "${offsetKey}" in sort definition "${sortDef.name}":`);
+                    console.error(`  Expected full array: [${Array.from(expectedOffsets).join(", ")}]`);
+                    console.error(`  Found full array:    [${Array.from(storedValue).join(", ")}]`);
+                    let currentOffset = 0;
+                    for (const field of sortDef.sortFields) {
+                        const rawValue = this.getValueByPath(record, field.path);
+                        const expectedFieldArray = this.convertValueToUint32Array(rawValue, field.dataType, field.sortDirection);
+                        const fieldLength = expectedFieldArray.length;
+                        if (fieldLength === 0) {
+                            console.error(`  Field "${field.sortColumn}" (value: ${rawValue}) produced an empty offset array.`);
+                            continue;
+                        }
+                        const expectedStart = expectedFieldArray[0];
+                        const expectedEnd = expectedFieldArray[fieldLength - 1];
+                        const storedFieldArray = storedValue.slice(currentOffset, currentOffset + fieldLength);
+                        const storedStart = storedFieldArray[0];
+                        const storedEnd = storedFieldArray[fieldLength - 1];
+                        console.error(`  Field "${field.sortColumn}" (value: ${rawValue}):`);
+                        console.error(`    Expected offsets: start=${expectedStart}, end=${expectedEnd}`);
+                        console.error(`    Found offsets:    start=${storedStart}, end=${storedEnd}`);
+                        currentOffset += fieldLength;
+                    }
+                }
+            }
+        }
+        console.info(`Verification complete: ${passedComparisons} passed out of ${totalComparisons} comparisons (sampled ${sampleSize} keys).`);
+    }
+    /**
+     * Returns a random sample (without replacement) from the provided array.
+     *
+     * @param {T[]} arr - The array to sample from.
+     * @param {number} sampleSize - The number of items to select.
+     * @returns {T[]} An array containing the selected sample.
+     */
+    getRandomSample(arr, sampleSize) {
+        const copy = [...arr];
+        const sample = [];
+        while (sample.length < sampleSize && copy.length > 0) {
+            const index = Math.floor(Math.random() * copy.length);
+            sample.push(copy[index]);
+            copy.splice(index, 1);
+        }
+        return sample;
+    }
+    /**
+     * Compares two Uint32Arrays for equality.
+     *
+     * @param {Uint32Array} a - The first array.
+     * @param {Uint32Array} b - The second array.
+     * @returns {boolean} True if both arrays have the same length and identical elements.
+     */
+    uint32ArrayEqual(a, b) {
+        if (a.length !== b.length)
+            return false;
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i])
+                return false;
+        }
+        return true;
     }
 }
 //# sourceMappingURL=VideoDB.js.map
