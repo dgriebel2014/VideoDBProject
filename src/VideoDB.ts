@@ -1,6 +1,5 @@
 ﻿// Copyright © 2025 Jon Griebel. dgriebel2014@gmail.com - All rights reserved.
 // Distributed under the MIT license.
-
 // videoDB.ts
 
 /**
@@ -21,8 +20,6 @@ import {
     RowIdPaddingResult
 } from "./types/StoreMetadata";
 
-// For convenience, define a simple flag for inactive rows, e.g. 0x1.
-const ROW_INACTIVE_FLAG = 0x1;
 export class VideoDB {
     public storeMetadataMap: Map<string, StoreMetadata>;
     public storeKeyMap: Map<string, Map<string, number>>;
@@ -305,17 +302,13 @@ export class VideoDB {
      * Retrieves multiple records from the specified store, supporting two different usage patterns:
      *
      * 1. **Fetch by an array of keys**:
-     *    ```ts
      *    const results = await videoDB.getMultiple("MyStore", ["key1", "key2", "key3"]);
-     *    ```
      *    - Returns a Promise resolving to an array of the same length as the input `keys`.
      *    - Each position corresponds to the deserialized data for that key, or `null` if the key does not exist.
      *    - Keys can also include wildcard patterns (e.g., `%`, `_`, or bracket expressions) which will be expanded to match multiple existing keys.
      *
      * 2. **Paginated fetch**:
-     *    ```ts
      *    const results = await videoDB.getMultiple("MyStore", 0, 100);
-     *    ```
      *    - Interprets the second parameter as `skip` and the third parameter as `take`.
      *    - Internally retrieves all keys from the store, then returns a slice of that array starting at index `skip` and spanning `take` entries.
      *    - The returned array contains data in the store’s internal keyMap order (not necessarily sorted by key).
@@ -405,7 +398,7 @@ export class VideoDB {
         }
 
         // Mark the row as inactive so that subsequent lookups ignore it.
-        rowMetadata.flags = (rowMetadata.flags ?? 0) | ROW_INACTIVE_FLAG;
+        rowMetadata.flags = (rowMetadata.flags ?? 0) | 0x1;
 
         // Optionally remove the key from the keyMap to prevent future retrieval.
         keyMap.delete(key);
@@ -728,7 +721,7 @@ export class VideoDB {
         if (!rowMetadata) {
             return null;
         }
-        if ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG) {
+        if ((rowMetadata.flags ?? 0) & 0x1) {
             return null;
         }
         return rowMetadata;
@@ -1042,7 +1035,7 @@ export class VideoDB {
             : storeMeta.rows[rowId - 1];  // O(1) lookup!
 
         // If active row exists and we are in "add" mode, throw:
-        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & 0x1)) {
             throw new Error(
                 `Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`
             );
@@ -1052,7 +1045,7 @@ export class VideoDB {
         const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
 
         // If row is new or inactive, create a fresh RowMetadata:
-        if (!rowMetadata || ((rowMetadata.flags ?? 0) & ROW_INACTIVE_FLAG)) {
+        if (!rowMetadata || ((rowMetadata.flags ?? 0) & 0x1)) {
             rowId = storeMeta.rows.length + 1;
             rowMetadata = {
                 rowId,
@@ -1106,7 +1099,7 @@ export class VideoDB {
             return oldRowMeta;
         } else {
             // Mark old row inactive
-            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | ROW_INACTIVE_FLAG;
+            oldRowMeta.flags = (oldRowMeta.flags ?? 0) | 0x1;
 
             // Find new space for the bigger data
             const { gpuBuffer, bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
