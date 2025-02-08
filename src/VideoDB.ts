@@ -30,6 +30,17 @@ export class VideoDB {
     public isReady: boolean | null = true;
     private waitUntilReadyPromise: Promise<void> | null = null;
     private readyResolver: (() => void) | null = null;
+    private textEncoder = new TextEncoder();
+    private static readonly typedArrayConstructors: { [key: string]: any } = {
+        Uint8Array,
+        Int8Array,
+        Uint16Array,
+        Int16Array,
+        Uint32Array,
+        Int32Array,
+        Float32Array,
+        Float64Array
+    };
 
     /**
      * Initializes a new instance of the VideoDB class.
@@ -42,10 +53,6 @@ export class VideoDB {
 
     /**
      * Creates a new object store with the specified configuration options.
-     * If the store uses `dataType: "JSON"` and has one or more `sortDefinition` objects,
-     * this method will also create a companion offsets store named `<storeName>-offsets`
-     * (with `dataType: "TypedArray"` and `typedArrayType: "Uint32Array"`) to store numeric
-     * sorting keys extracted from JSON fields.
      *
      * @param {string} storeName - The name of the store to create.
      * @param {{
@@ -162,23 +169,6 @@ export class VideoDB {
         this.storeMetadataMap.set(storeName, storeMetadata);
         // 5a) Also create an empty keyMap for this storeName.
         this.storeKeyMap.set(storeName, new Map());
-
-        // 6) If this is a JSON-type store with one or more sort definitions, also create an "offsets" store.
-        if (options.dataType === "JSON" && options.sortDefinition && options.sortDefinition.length) {
-            // 6a) Determine how many fields there are in total across all sort definitions.
-            const totalSortFields = options.sortDefinition.reduce(
-                (count, def) => count + def.sortFields.length,
-                0
-            );
-
-            // 6c) Create the companion offsets store with typedArrayType = "Uint32Array" and a large buffer size.
-            this.createObjectStore(`${storeName}-offsets`, {
-                dataType: "TypedArray",
-                typedArrayType: "Uint32Array",
-                bufferSize: 10 * 1024 * 1024,
-                totalRows: options.totalRows
-            });
-        }
     }
 
     /**
@@ -204,7 +194,6 @@ export class VideoDB {
 
     /**
      * Adds a new record to the specified store, with delayed GPU writes.
-     * If the store has JSON sort definitions, it also computes and stores offsets.
      *
      * @async
      * @function
@@ -227,20 +216,13 @@ export class VideoDB {
         // 1) Write main record
         await this.writeRecordToStore(storeMeta, key, value, "add");
 
-        //// 2) If JSON-based with sort definitions, handle all offsets
-        //if (storeMeta.dataType === "JSON" && storeMeta.sortDefinition?.length) {
-        //    storeMeta.sortsDirty = true;
-        //    await this.writeOffsetsForAllDefinitions(storeMeta, key, value, "add");
-        //}
-
-        // 3) Reset flush timer and possibly flush
+        // 2) Reset flush timer and possibly flush
         this.resetFlushTimer();
         await this.checkAndFlush();
     }
 
     /**
      * Updates (or adds) a record in the specified store, with delayed GPU writes.
-     * If the store has JSON sort definitions, it also computes and stores offsets.
      *
      * @async
      * @function
@@ -263,13 +245,7 @@ export class VideoDB {
         // 1) Write main record
         await this.writeRecordToStore(storeMeta, key, value, "put");
 
-        //// 2) If JSON-based with sort definitions, handle all offsets
-        //if (storeMeta.dataType === "JSON" && storeMeta.sortDefinition?.length) {
-        //    storeMeta.sortsDirty = true;
-        //    await this.writeOffsetsForAllDefinitions(storeMeta, key, value, "put");
-        //}
-
-        // 3) Reset flush timer and possibly flush
+        // 2) Reset flush timer and possibly flush
         this.resetFlushTimer();
         await this.checkAndFlush();
     }
@@ -927,115 +903,6 @@ export class VideoDB {
     }
 
     /**
-     * Serializes a value (JSON, TypedArray, ArrayBuffer, etc.) into an ArrayBuffer
-     * suitable for writing to the GPU buffer.
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The metadata of the store being written to.
-     * @param {any} value - The original value to serialize.
-     * @returns {ArrayBuffer} The serialized value as an ArrayBuffer.
-     */
-    private serializeValueForStore(storeMeta: StoreMetadata, value: any): ArrayBuffer {
-        let resultBuffer: ArrayBuffer;
-
-        switch (storeMeta.dataType) {
-            case "JSON": {
-                let jsonString = JSON.stringify(value);
-                jsonString = this.padJsonTo4Bytes(jsonString);
-                const cloned = new TextEncoder().encode(jsonString).slice();
-                resultBuffer = cloned.buffer;
-                break;
-            }
-
-            case "TypedArray": {
-                if (!storeMeta.typedArrayType) {
-                    throw new Error(`typedArrayType is missing for store "${storeMeta}".`);
-                }
-                if (!(value instanceof globalThis[storeMeta.typedArrayType])) {
-                    throw new Error(
-                        `Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta}".`
-                    );
-                }
-                resultBuffer = (value as { buffer: ArrayBuffer }).buffer;
-                break;
-            }
-
-            case "ArrayBuffer": {
-                if (!(value instanceof ArrayBuffer)) {
-                    throw new Error(`Value must be an ArrayBuffer for store "${storeMeta}".`);
-                }
-                resultBuffer = value;
-                break;
-            }
-
-            default:
-                throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
-        }
-
-        // Finally, ensure the buffer is 4-byte-aligned for WebGPU.
-        return this.padTo4Bytes(resultBuffer);
-    }
-
-    /**
-     * Finds existing row metadata for a given key or creates a new row entry if one does not exist.
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The metadata of the store.
-     * @param {Map<string, number>} keyMap - A mapping of keys to row indices.
-     * @param {string} key - The unique key identifying the row.
-     * @param {ArrayBuffer} arrayBuffer - The data to be associated with this row.
-     * @param {"add"|"put"} operationType - The operation type (whether we're adding or putting).
-     * @returns {Promise<RowMetadata>} A promise that resolves with the row metadata.
-     */
-    private async findOrCreateRowMetadata(
-        storeMeta: StoreMetadata,
-        keyMap: Map<string, number>,
-        key: string,
-        arrayBuffer: ArrayBuffer,
-        mode: "add" | "put"
-    ): Promise<RowMetadata> {
-        let rowId = keyMap.get(key);
-        let rowMetadata = rowId == null
-            ? null
-            : storeMeta.rows.find((r) => r.rowId === rowId) || null;
-
-        // If active row exists and we are in "add" mode, throw:
-        if (mode === "add" && rowMetadata && !((rowMetadata.flags ?? 0) & 0x1)) {
-            throw new Error(
-                `Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`
-            );
-        }
-
-        // Allocate space in a GPU buffer (just picks offset/bufferIndex, no write):
-        const { bufferIndex, offset } = this.findOrCreateSpace(storeMeta, arrayBuffer.byteLength);
-
-        // If row is new or inactive, create a fresh RowMetadata:
-        if (!rowMetadata || ((rowMetadata.flags ?? 0) & 0x1)) {
-            rowId = storeMeta.rows.length + 1;
-            rowMetadata = {
-                rowId,
-                bufferIndex,
-                offset,
-                length: arrayBuffer.byteLength
-            };
-            storeMeta.rows.push(rowMetadata);
-            keyMap.set(key, rowId);
-        }
-        // If row is active and we’re in "put" mode, handle potential reallocation:
-        else if (mode === "put") {
-            rowMetadata = await this.updateRowOnOverwrite(
-                storeMeta,
-                rowMetadata,
-                arrayBuffer,
-                keyMap,
-                key
-            );
-        }
-
-        return rowMetadata;
-    }
-
-    /**
      * If the new data is larger than the existing row’s allocated space, this method
      * deactivates the old row and allocates a new buffer space. Otherwise, it
      * simply updates the length field for in-place overwriting.
@@ -1155,22 +1022,6 @@ export class VideoDB {
             default:
                 throw new Error(`Unsupported typedArrayType: ${typedArrayType}`);
         }
-    }
-
-    /**
-     * Retrieves the GPU buffer instance corresponding to a specific buffer index.
-     *
-     * @private
-     * @param {StoreMetadata} storeMeta - The metadata of the store.
-     * @param {number} bufferIndex - The index of the buffer to retrieve.
-     * @returns {GPUBuffer} The GPU buffer at the specified index.
-     */
-    private getBufferByIndex(storeMeta: StoreMetadata, bufferIndex: number): GPUBuffer {
-        const bufMeta = storeMeta.buffers[bufferIndex];
-        if (!bufMeta || !bufMeta.gpuBuffer) {
-            throw new Error(`Buffer index ${bufferIndex} not found or uninitialized.`);
-        }
-        return bufMeta.gpuBuffer;
     }
 
     /**
@@ -1697,10 +1548,13 @@ export class VideoDB {
         value: any,
         operationType: "add" | "put"
     ): Promise<void> {
+        // Look up the key-to-rowId mapping (assumed to be a Map)
         const keyMap = this.storeKeyMap.get(storeMeta.storeName)!;
+
+        // Serialize and pad the value as appropriate.
         const arrayBuffer = this.serializeValueForStore(storeMeta, value);
 
-        // Find or create row metadata
+        // Find (or create) the metadata for the row.
         const rowMetadata = await this.findOrCreateRowMetadata(
             storeMeta,
             keyMap,
@@ -1709,10 +1563,10 @@ export class VideoDB {
             operationType
         );
 
-        // Get GPU buffer
+        // Get the GPU buffer (by buffer index).
         const gpuBuffer = this.getBufferByIndex(storeMeta, rowMetadata.bufferIndex);
 
-        // Queue the main store write
+        // Queue the write (this object literal could later be reused from a pool if needed)
         this.pendingWrites.push({
             storeMeta,
             rowMetadata,
@@ -1720,6 +1574,181 @@ export class VideoDB {
             gpuBuffer,
             operationType,
         });
+    }
+
+    /**
+     * Finds existing row metadata for a given key or creates a new row entry if one does not exist.
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The metadata of the store.
+     * @param {Map<string, number>} keyMap - A mapping of keys to row indices.
+     * @param {string} key - The unique key identifying the row.
+     * @param {ArrayBuffer} arrayBuffer - The data to be associated with this row.
+     * @param {"add"|"put"} operationType - The operation type (whether we're adding or putting).
+     * @returns {Promise<RowMetadata>} A promise that resolves with the row metadata.
+     */
+    private async findOrCreateRowMetadata(
+        storeMeta: StoreMetadata,
+        keyMap: Map<string, number>,
+        key: string,
+        arrayBuffer: ArrayBuffer,
+        mode: "add" | "put"
+    ): Promise<RowMetadata> {
+        // Instead of using .find, assume that if keyMap.get(key) returns a rowId,
+        // then the metadata is stored at index rowId - 1.
+        const rowId = keyMap.get(key);
+        let rowMetadata: RowMetadata | null =
+            rowId == null ? null : (storeMeta.rows[rowId - 1] ?? null);
+
+        // If in "add" mode and a non-flagged (active) row exists, then error.
+        if (
+            mode === "add" &&
+            rowMetadata &&
+            !((rowMetadata.flags ?? 0) & 0x1)
+        ) {
+            throw new Error(
+                `Record with key "${key}" already exists in store and overwriting is not allowed (add mode).`
+            );
+        }
+
+        // Allocate space in a GPU buffer (this call is assumed to be fast)
+        const { bufferIndex, offset } = this.findOrCreateSpace(
+            storeMeta,
+            arrayBuffer.byteLength
+        );
+
+        // If there is no row metadata or the row is “inactive” (flag set), create a new entry.
+        if (!rowMetadata || ((rowMetadata.flags ?? 0) & 0x1)) {
+            const newRowId = storeMeta.rows.length + 1;
+            rowMetadata = {
+                rowId: newRowId,
+                bufferIndex,
+                offset,
+                length: arrayBuffer.byteLength,
+            };
+            storeMeta.rows.push(rowMetadata);
+            keyMap.set(key, newRowId);
+        }
+        // Otherwise, in "put" mode, update the existing row.
+        else if (mode === "put") {
+            rowMetadata = await this.updateRowOnOverwrite(
+                storeMeta,
+                rowMetadata,
+                arrayBuffer,
+                keyMap,
+                key
+            );
+        }
+
+        return rowMetadata;
+    }
+
+    /**
+     * Retrieves the GPU buffer instance corresponding to a specific buffer index.
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The metadata of the store.
+     * @param {number} bufferIndex - The index of the buffer to retrieve.
+     * @returns {GPUBuffer} The GPU buffer at the specified index.
+     */
+    private getBufferByIndex(
+        storeMeta: StoreMetadata,
+        bufferIndex: number
+    ): GPUBuffer {
+        const bufMeta = storeMeta.buffers[bufferIndex];
+        if (!bufMeta || !bufMeta.gpuBuffer) {
+            throw new Error(`Buffer index ${bufferIndex} not found or uninitialized.`);
+        }
+        return bufMeta.gpuBuffer;
+    }
+
+    /**
+     * Serializes a value (JSON, TypedArray, ArrayBuffer, etc.) into an ArrayBuffer
+     * suitable for writing to the GPU buffer.
+     *
+     * @private
+     * @param {StoreMetadata} storeMeta - The metadata of the store being written to.
+     * @param {any} value - The original value to serialize.
+     * @returns {ArrayBuffer} The serialized value as an ArrayBuffer.
+     */
+    private serializeValueForStore(
+        storeMeta: StoreMetadata,
+        value: any
+    ): ArrayBuffer {
+        switch (storeMeta.dataType) {
+            case "JSON": {
+                // Stringify the value.
+                const jsonString = JSON.stringify(value);
+                // Encode once using the cached encoder.
+                const encoded = this.textEncoder.encode(jsonString);
+                // Use bitwise & 3 to compute the remainder.
+                const mod = encoded.byteLength & 3;
+                if (mod === 0) {
+                    return encoded.buffer as ArrayBuffer;
+                }
+                const needed = 4 - mod;
+                // Allocate a new Uint8Array with extra room for padding.
+                const padded = new Uint8Array(encoded.byteLength + needed);
+                padded.set(encoded);
+                // Pad with ASCII space (0x20) so that the encoded JSON string’s length becomes a multiple of 4.
+                padded.fill(0x20, encoded.byteLength);
+                return padded.buffer;
+            }
+
+            case "TypedArray": {
+                if (!storeMeta.typedArrayType) {
+                    throw new Error(
+                        `typedArrayType is missing for store "${storeMeta.storeName}".`
+                    );
+                }
+                // Use a cached constructor rather than globalThis lookup.
+                const TypedArrayConstructor = VideoDB.typedArrayConstructors[storeMeta.typedArrayType];
+
+                if (!TypedArrayConstructor) {
+                    throw new Error(
+                        `Unknown typedArrayType "${storeMeta.typedArrayType}" for store "${storeMeta.storeName}".`
+                    );
+                }
+                if (!(value instanceof TypedArrayConstructor)) {
+                    throw new Error(
+                        `Value must be an instance of ${storeMeta.typedArrayType} for store "${storeMeta.storeName}".`
+                    );
+                }
+                const ab = (value as { buffer: ArrayBuffer }).buffer;
+                return this.padTo4Bytes(ab);
+            }
+
+            case "ArrayBuffer": {
+                if (!(value instanceof ArrayBuffer)) {
+                    throw new Error(
+                        `Value must be an ArrayBuffer for store "${storeMeta.storeName}".`
+                    );
+                }
+                return this.padTo4Bytes(value);
+            }
+
+            default:
+                throw new Error(`Unknown dataType "${storeMeta.dataType}".`);
+        }
+    }
+
+    /**
+     * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
+     * by appending spaces as needed.
+     *
+     * @param {string} jsonString - The original JSON string to pad.
+     * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
+     */
+    private padTo4Bytes(ab: ArrayBuffer): ArrayBuffer {
+        // Use bitwise math rather than modulo (both are fast, but bitwise can be slightly faster)
+        const mod = ab.byteLength & 3;
+        if (mod === 0) {
+            return ab;
+        }
+        const needed = 4 - mod;
+        const padded = new Uint8Array(ab.byteLength + needed);
+        padded.set(new Uint8Array(ab), 0);
+        return padded.buffer;
     }
 
     /**
@@ -1731,42 +1760,5 @@ export class VideoDB {
      */
     private roundUp(value: number, align: number): number {
         return Math.ceil(value / align) * align;
-    }
-
-    /**
-     * Ensures the length of the UTF-8 representation of `jsonString` is a multiple of 4
-     * by appending spaces as needed.
-     *
-     * @param {string} jsonString - The original JSON string to pad.
-     * @returns {string} The padded JSON string, whose UTF-8 length is a multiple of 4.
-     */
-    private padJsonTo4Bytes(jsonString: string): string {
-        const encoder = new TextEncoder();
-        const initialBytes = encoder.encode(jsonString).length;
-        const remainder = initialBytes % 4;
-        if (remainder === 0) {
-            return jsonString;
-        }
-        const needed = 4 - remainder;
-        return jsonString + " ".repeat(needed);
-    }
-
-    /**
-     * Pads the given ArrayBuffer so that its byte length is a multiple of 4.
-     * If it is already aligned, returns the original buffer. Otherwise, returns
-     * a new buffer with zero-padding at the end.
-     *
-     * @param {ArrayBuffer} ab - The original ArrayBuffer to pad.
-     * @returns {ArrayBuffer} A 4-byte-aligned ArrayBuffer.
-     */
-    private padTo4Bytes(ab: ArrayBuffer): ArrayBuffer {
-        const remainder = ab.byteLength % 4;
-        if (remainder === 0) {
-            return ab;
-        }
-        const needed = 4 - remainder;
-        const padded = new Uint8Array(ab.byteLength + needed);
-        padded.set(new Uint8Array(ab), 0);
-        return padded.buffer;
     }
 }
