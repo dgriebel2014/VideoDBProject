@@ -2501,16 +2501,6 @@ for await (const record of videoDB.openCursor("myFloatStore", { range, direction
 
                 // Now call setupGrid()
                 await setupGrid(storeName);
-
-                // Once ready, verify the field offsets on a 10% sample of rows
-                try {
-                    // Wait until videoDB is ready
-                    await videoDB.waitUntilReady();
-                    await videoDB.verifyFieldOffsets(storeName, 1);
-                    console.info("Field offsets verification completed successfully.");
-                } catch (error) {
-                    console.error("Error during field offsets verification:", error);
-                }
             } catch (error) {
                 logToConsole(`[ERROR] ${error.message}`);
             } finally {
